@@ -7,7 +7,6 @@ Created on May 13 08:04:38 2024
 """
 import io
 import os
-import pandas as pd
 from pydantic import BaseModel, HttpUrl
 from typing import List
 import boto3
