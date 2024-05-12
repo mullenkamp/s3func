@@ -138,7 +138,7 @@ def test_legal_hold():
 
     """
     put_object_legal_hold(s3, bucket, obj_key, False)
-    
+
     hold = get_object_legal_hold(s3, bucket, obj_key)
     if hold:
         raise ValueError("There's a hold, but there shouldn't be.")
