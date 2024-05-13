@@ -30,11 +30,50 @@ buffer_size = 524288
 read_timeout = 60
 threads = 10
 object_lock = False
+file_name = 'stn_data.blt'
 obj_key = uuid.uuid4().hex
 base_url = 'https://b2.tethys-ts.xyz/file/' + bucket + '/'
 url = base_url +  obj_key
 
 s3 = s3_client(conn_config)
+
+
+################################################
+### Pytest stuff
+
+
+@pytest.hookimpl(tryfirst=True, hookwrapper=True)
+def pytest_runtest_makereport(item, call):
+    # execute all other hooks to obtain the report object
+    outcome = yield
+    rep = outcome.get_result()
+
+    # set a report attribute for each phase of a call, which can
+    # be "setup", "call", "teardown"
+
+    setattr(item, "rep_" + rep.when, rep)
+
+
+@pytest.fixture
+def get_logs(request):
+    yield
+
+    if request.node.rep_call.failed:
+        # Add code here to cleanup failure scenario
+        print("executing test failed")
+
+        obj_keys = []
+        for js in list_object_versions(s3, bucket):
+            if js['Key'] == obj_key:
+                obj_keys.append({'Key': js['Key'], 'VersionId': js['VersionId']})
+
+        if obj_keys:
+            delete_objects(s3, bucket, obj_keys)
+
+    # elif request.node.rep_call.passed:
+    #     # Add code here to cleanup success scenario
+    #     print("executing test success")
+
 
 ################################################
 ### Tests
@@ -57,7 +96,7 @@ def test_put_object():
 
     """
     ### Upload with bytes
-    with open(script_path.joinpath(obj_key), 'rb') as f:
+    with open(script_path.joinpath(file_name), 'rb') as f:
         obj = f.read()
 
     resp1 = put_object(s3, bucket, obj_key, obj)
@@ -69,7 +108,7 @@ def test_put_object():
     resp1_etag = resp1['ETag']
 
     ## Upload with a file-obj
-    resp2 = put_object(s3, bucket, obj_key, open(script_path.joinpath(obj_key), 'rb'))
+    resp2 = put_object(s3, bucket, obj_key, open(script_path.joinpath(file_name), 'rb'))
 
     meta = resp2['ResponseMetadata']
     if meta['HTTPStatusCode'] != 200:
@@ -138,8 +177,6 @@ def test_legal_hold():
     """
 
     """
-    put_object_legal_hold(s3, bucket, obj_key, False)
-
     hold = get_object_legal_hold(s3, bucket, obj_key)
     if hold:
         raise ValueError("There's a hold, but there shouldn't be.")
@@ -156,7 +193,7 @@ def test_legal_hold():
     if hold:
         raise ValueError("There's a hold, but there shouldn't be.")
 
-    resp2 = put_object(s3, bucket, obj_key, open(script_path.joinpath(obj_key), 'rb'), object_legal_hold=True)
+    resp2 = put_object(s3, bucket, obj_key, open(script_path.joinpath(file_name), 'rb'), object_legal_hold=True)
 
     hold = get_object_legal_hold(s3, bucket, obj_key)
     if not hold:
