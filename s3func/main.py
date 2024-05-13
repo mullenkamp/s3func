@@ -8,7 +8,7 @@ Created on May 13 08:04:38 2024
 import io
 import os
 from pydantic import HttpUrl
-from typing import List
+from typing import List, Union
 import boto3
 import botocore
 import copy
@@ -260,7 +260,7 @@ def get_object_combo(obj_key: str, bucket: str, s3: botocore.client.BaseClient =
     return stream
 
 
-def put_object(s3: botocore.client.BaseClient, bucket: str, obj_key: str, obj: bytes | io.BufferedIOBase, metadata: dict=None, content_type: str=None, object_legal_hold: bool=False):
+def put_object(s3: botocore.client.BaseClient, bucket: str, obj_key: str, obj: Union[bytes, io.BufferedIOBase], metadata: dict=None, content_type: str=None, object_legal_hold: bool=False):
     """
     Function to upload data to an S3 bucket. This function will iteratively write the input file_obj in chunks ensuring that little memory is needed writing the object.
 
