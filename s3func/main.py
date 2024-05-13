@@ -18,8 +18,8 @@ from urllib3.util import Retry, Timeout
 # from requests.adapters import HTTPAdapter
 import urllib3
 
-# from s3func import utils
-import utils
+from . import utils
+# import utils
 
 #######################################################
 ### Parameters
