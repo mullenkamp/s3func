@@ -7,21 +7,20 @@ Created on May 13 08:04:38 2024
 """
 import io
 import os
-import pandas as pd
-from pydantic import BaseModel, HttpUrl
-from typing import List
+from pydantic import HttpUrl
+from typing import List, Union
 import boto3
 import botocore
 import copy
-import requests
+# import requests
 import urllib.parse
 from urllib3.util import Retry, Timeout
 # from requests import Session
 # from requests.adapters import HTTPAdapter
 import urllib3
 
-# from s3func import utils
-import utils
+from . import utils
+# import utils
 
 #######################################################
 ### Parameters
@@ -219,7 +218,7 @@ def get_object(obj_key: str, bucket: str, s3: botocore.client.BaseClient = None,
     return response['Body']
 
 
-def get_object_combo(obj_key: str, bucket: str, s3: botocore.client.BaseClient = None, session: requests.sessions.Session=None, base_url: HttpUrl=None, version_id: str=None, range_start: int=None, range_end: int=None, chunk_size: int=524288, **kwargs):
+def get_object_combo(obj_key: str, bucket: str, s3: botocore.client.BaseClient = None, session: urllib3.poolmanager.PoolManager=None, base_url: HttpUrl=None, version_id: str=None, range_start: int=None, range_end: int=None, chunk_size: int=524288, **kwargs):
     """
     Combo function to get an object from an S3 bucket either using the S3 get_object function or the base_url_to_stream function. One of s3, connection_config, or base_url must be used. This function will return a file object of the object in the S3 (or url) location. This file object does not contain any data until data is read from it, which ensures large files are not completely read into memory.
 
@@ -261,7 +260,7 @@ def get_object_combo(obj_key: str, bucket: str, s3: botocore.client.BaseClient =
     return stream
 
 
-def put_object(s3: botocore.client.BaseClient, bucket: str, obj_key: str, obj: bytes | io.BufferedIOBase, metadata: dict=None, content_type: str=None, object_legal_hold: bool=False):
+def put_object(s3: botocore.client.BaseClient, bucket: str, obj_key: str, obj: Union[bytes, io.BufferedIOBase], metadata: dict=None, content_type: str=None, object_legal_hold: bool=False):
     """
     Function to upload data to an S3 bucket. This function will iteratively write the input file_obj in chunks ensuring that little memory is needed writing the object.
 
