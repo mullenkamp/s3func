@@ -7,6 +7,7 @@ Created on May 13 08:04:38 2024
 """
 import io
 import os
+from pydantic import HttpUrl
 from typing import List
 import boto3
 import botocore
