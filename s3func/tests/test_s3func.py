@@ -1,5 +1,6 @@
 import pytest
 import os, pathlib
+import uuid
 try:
     import tomllib as toml
 except ImportError:
@@ -29,7 +30,7 @@ buffer_size = 524288
 read_timeout = 60
 threads = 10
 object_lock = False
-obj_key = 'stns_data.blt'
+obj_key = uuid.uuid4().hex
 base_url = 'https://b2.tethys-ts.xyz/file/' + bucket + '/'
 url = base_url +  obj_key
 
