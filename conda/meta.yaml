@@ -37,7 +37,10 @@ requirements:
     - setuptools
     - hatchling
   run:
-    - python >=3.10
+    - python >=3.9
+    - boto3
+    - urllib3
+    - pydantic
 
 test:
   imports:
