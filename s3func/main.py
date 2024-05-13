@@ -7,12 +7,11 @@ Created on May 13 08:04:38 2024
 """
 import io
 import os
-from pydantic import BaseModel, HttpUrl
 from typing import List
 import boto3
 import botocore
 import copy
-import requests
+# import requests
 import urllib.parse
 from urllib3.util import Retry, Timeout
 # from requests import Session
