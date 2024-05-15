@@ -183,7 +183,8 @@ def chunks(lst, n_items):
 
 
 
-
+class S3ErrorResponse:
+    pass
 
 
 

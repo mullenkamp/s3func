@@ -163,6 +163,7 @@ def url_to_stream(url: HttpUrl, session: urllib3.poolmanager.PoolManager=None, r
     headers = utils.build_url_headers(range_start=range_start, range_end=range_end)
 
     response = session.request('get', url, headers=headers, preload_content=False)
+    response.content_length = int(response.headers['Content-Length'])
 
     return response
 
@@ -212,10 +213,20 @@ def get_object(obj_key: str, bucket: str, s3: botocore.client.BaseClient = None,
 
     params = utils.build_s3_params(bucket, obj_key=obj_key, version_id=version_id, range_start=range_start, range_end=range_end)
 
-    response = s3.get_object(**params)
-    # response['ResponseMetadata']['ETag'] = response['ResponseMetadata']['ETag'].strip('"')
+    try:
+        response = s3.get_object(**params)
+        stream = response['Body']
+        stream.status = 200
+        stream.etag = response['ETag'].strip('"')
+        stream.content_length = response['ContentLength']
+        stream.last_modified = response['LastModified']
+        stream.version_id = response['VersionId']
+        stream.metadata = response['Metadata']
+    except s3.exceptions.NoSuchKey:
+        stream = utils.S3ErrorResponse()
+        stream.status = 404
 
-    return response['Body']
+    return stream
 
 
 def get_object_combo(obj_key: str, bucket: str, s3: botocore.client.BaseClient = None, session: urllib3.poolmanager.PoolManager=None, base_url: HttpUrl=None, version_id: str=None, range_start: int=None, range_end: int=None, chunk_size: int=524288, **kwargs):
