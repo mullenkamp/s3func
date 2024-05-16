@@ -1,6 +1,7 @@
 import pytest
 import os, pathlib
 import uuid
+import io
 try:
     import tomllib as toml
 except ImportError:
