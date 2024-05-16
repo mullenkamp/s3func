@@ -15,6 +15,7 @@ import copy
 # import requests
 import urllib.parse
 from urllib3.util import Retry, Timeout
+import datetime
 # from requests import Session
 # from requests.adapters import HTTPAdapter
 import urllib3
@@ -219,8 +220,8 @@ def get_object(obj_key: str, bucket: str, s3: botocore.client.BaseClient = None,
         stream.status = 200
         stream.etag = response['ETag'].strip('"')
         stream.content_length = response['ContentLength']
-        stream.last_modified = response['LastModified']
         stream.version_id = response['VersionId']
+        stream.last_modified = datetime.datetime.fromtimestamp(int(response['VersionId'].split('_u')[1]) * 0.001, datetime.timezone.utc)
         stream.metadata = response['Metadata']
     except s3.exceptions.NoSuchKey:
         stream = utils.S3ErrorResponse()
@@ -269,6 +270,82 @@ def get_object_combo(obj_key: str, bucket: str, s3: botocore.client.BaseClient =
         raise TypeError('One of s3, connection_config, or public_url needs to be correctly defined.')
 
     return stream
+
+
+def url_to_headers(url: HttpUrl, session: urllib3.poolmanager.PoolManager=None, **url_session_kwargs):
+    """
+
+    """
+    if session is None:
+        session = url_session(**url_session_kwargs)
+
+    response = session.request('head', url)
+
+    headers = dict(response.headers)
+    headers['content_length'] = int(headers['Content-Length'])
+    if 'x-bz-file-id' in headers:
+        headers['version_id'] = headers['x-bz-file-id']
+    if 'X-Bz-Upload-Timestamp' in headers:
+        headers['last_modified'] = datetime.datetime.fromtimestamp(int(headers['X-Bz-Upload-Timestamp']) * 0.001, datetime.timezone.utc)
+    elif 'x-bz-file-id' in headers:
+        headers['last_modified'] = datetime.datetime.fromtimestamp(int(headers['x-bz-file-id'].split('_u')[1]) * 0.001, datetime.timezone.utc)
+
+    return headers
+
+
+def base_url_to_headers(obj_key: str, base_url: HttpUrl, session: urllib3.poolmanager.PoolManager=None, **url_session_kwargs):
+    """
+
+    """
+    if not base_url.endswith('/'):
+        base_url += '/'
+    url = urllib.parse.urljoin(base_url, obj_key)
+    headers = url_to_headers(url, session, **url_session_kwargs)
+
+    return headers
+
+
+def head_object(obj_key: str, bucket: str, s3: botocore.client.BaseClient = None, version_id: str=None, **s3_client_kwargs):
+    """
+    Function to get an object from an S3 bucket. Either s3 or connection_config must be used. This function will return a file object of the object in the S3 location. This file object does not contain any data until data is read from it, which ensures large files are not completely read into memory.
+
+    Parameters
+    ----------
+    obj_key : str
+        The object key in the S3 bucket.
+    bucket : str
+        The bucket name.
+    s3 : botocore.client.BaseClient
+        An S3 client object created via the s3_client function.
+    version_id : str
+        The S3 version id associated with the object.
+    s3_client_kwargs:
+        kwargs to the s3_client function if the s3 parameter was not passed.
+
+    Returns
+    -------
+    read-only file obj
+    """
+    ## Get the object
+    if s3 is None:
+        s3 = s3_client(**s3_client_kwargs)
+
+    params = utils.build_s3_params(bucket, obj_key=obj_key, version_id=version_id)
+
+    try:
+        response = s3.head_object(**params)
+        response['status']= 200
+        response['etag'] = response.pop('ETag').strip('"')
+        response['content_length'] = response.pop('ContentLength')
+        response['version_id'] = response.pop('VersionId')
+        response['last_modified'] = datetime.datetime.fromtimestamp(int(response['version_id'].split('_u')[1]) * 0.001, datetime.timezone.utc)
+        response['metadata'] = response.pop('Metadata')
+        del response['LastModified']
+    except s3.exceptions.NoSuchKey:
+        response = utils.S3ErrorResponse()
+        response['status'] = 404
+
+    return response
 
 
 def put_object(s3: botocore.client.BaseClient, bucket: str, obj_key: str, obj: Union[bytes, io.BufferedIOBase], metadata: dict=None, content_type: str=None, object_legal_hold: bool=False):

@@ -173,6 +173,24 @@ def test_url_to_stream():
     assert data1 == data2
 
 
+def test_head_object():
+    """
+
+    """
+    headers = head_object(obj_key, bucket, s3)
+
+    assert 'version_id' in headers
+
+
+def test_url_to_headers():
+    """
+
+    """
+    headers = url_to_headers(url)
+
+    assert 'version_id' in headers
+
+
 def test_legal_hold():
     """
 
