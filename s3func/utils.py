@@ -9,6 +9,7 @@ Created on Sat Oct  8 11:02:46 2022
 # import os
 # import pandas as pd
 from pydantic import BaseModel, HttpUrl
+import datetime
 
 #######################################################
 ### Parameters
@@ -29,7 +30,7 @@ class ConnectionConfig(BaseModel):
     aws_secret_access_key: str
 
 
-def build_s3_params(bucket: str, obj_key: str=None, start_after: str=None, prefix: str=None, delimiter: str=None, max_keys: int=None, key_marker: str=None, object_legal_hold: bool=False, range_start: int=None, range_end: int=None, metadata: dict=None, content_type: str=None, version_id: str=None):
+def build_s3_params(bucket: str, obj_key: str=None, start_after: str=None, prefix: str=None, delimiter: str=None, max_keys: int=None, key_marker: str=None, object_legal_hold: bool=False, range_start: int=None, range_end: int=None, metadata: dict={}, content_type: str=None, version_id: str=None):
     """
 
     """
@@ -118,6 +119,47 @@ def chunks(lst, n_items):
         yield lst[pos:pos + remainder]
 
 
+def add_metadata_from_urllib3(response):
+    """
+    Function to create metadata from the http headers/response.
+    """
+    headers = response.headers
+    metadata = {'status': response.status}
+    if 'Content-Length' in headers:
+        metadata['content_length'] = int(headers['Content-Length'])
+    if 'x-bz-file-id' in headers:
+        metadata['version_id'] = headers['x-bz-file-id']
+    if 'X-Bz-Upload-Timestamp' in headers:
+        metadata['last_modified'] = datetime.datetime.fromtimestamp(int(headers['X-Bz-Upload-Timestamp']) * 0.001, datetime.timezone.utc)
+    elif 'x-bz-file-id' in headers:
+        metadata['last_modified'] = datetime.datetime.fromtimestamp(int(headers['x-bz-file-id'].split('_u')[1]) * 0.001, datetime.timezone.utc)
+    if 'x-bz-info-content-md5' in headers:
+        metadata['etag'] = headers['x-bz-info-content-md5']
+
+    return metadata
+
+
+def add_metadata_from_s3(response):
+    """
+    Function to create metadata from the s3 headers/response.
+    """
+    # headers = response.headers
+    if 'Metadata' in response:
+        metadata = response.pop('Metadata')
+    else:
+        metadata = {}
+
+    metadata['etag'] = response['ETag'].strip('"')
+    metadata['version_id'] = response['VersionId']
+    metadata['last_modified'] = datetime.datetime.fromtimestamp(int(metadata['version_id'].split('_u')[1]) * 0.001, datetime.timezone.utc)
+    if 'ContentLength' in response:
+        metadata['content_length'] = response['ContentLength']
+    if 'HTTPStatusCode' in response['ResponseMetadata']:
+        metadata['status'] = response['ResponseMetadata']['HTTPStatusCode']
+
+    return metadata
+
+
 # class ResponseStream(object):
 #     """
 #     In many applications, you'd like to access a requests response as a file-like object, simply having .read(), .seek(), and .tell() as normal. Especially when you only want to partially download a file, it'd be extra convenient if you could use a normal file interface for it, loading as needed.
@@ -181,7 +223,8 @@ def chunks(lst, n_items):
 #             kwargs["timeout"] = self.timeout
 #         return super().send(request, **kwargs)
 
-
+class S3Response:
+    pass
 
 class S3ErrorResponse:
     pass
