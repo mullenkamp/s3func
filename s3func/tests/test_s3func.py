@@ -1,6 +1,7 @@
 import pytest
 import os, pathlib
 import uuid
+import io
 try:
     import tomllib as toml
 except ImportError:
@@ -96,25 +97,25 @@ def test_put_object():
 
     """
     ### Upload with bytes
-    with open(script_path.joinpath(file_name), 'rb') as f:
+    with io.open(script_path.joinpath(file_name), 'rb') as f:
         obj = f.read()
 
     resp1 = put_object(s3, bucket, obj_key, obj)
 
-    meta = resp1['ResponseMetadata']
-    if meta['HTTPStatusCode'] != 200:
+    meta = resp1.metadata
+    if meta['status'] != 200:
         raise ValueError('Upload failed')
 
-    resp1_etag = resp1['ETag']
+    resp1_etag = meta['etag']
 
     ## Upload with a file-obj
-    resp2 = put_object(s3, bucket, obj_key, open(script_path.joinpath(file_name), 'rb'))
+    resp2 = put_object(s3, bucket, obj_key, io.open(script_path.joinpath(file_name), 'rb'))
 
-    meta = resp2['ResponseMetadata']
-    if meta['HTTPStatusCode'] != 200:
+    meta = resp2.metadata
+    if meta['status'] != 200:
         raise ValueError('Upload failed')
 
-    resp2_etag = resp2['ETag']
+    resp2_etag = meta['etag']
 
     assert resp1_etag == resp2_etag
 
@@ -177,18 +178,18 @@ def test_head_object():
     """
 
     """
-    headers = head_object(obj_key, bucket, s3)
+    response = head_object(obj_key, bucket, s3)
 
-    assert 'version_id' in headers
+    assert 'version_id' in response.metadata
 
 
 def test_url_to_headers():
     """
 
     """
-    headers = url_to_headers(url)
+    response = url_to_headers(url)
 
-    assert 'version_id' in headers
+    assert 'version_id' in response.metadata
 
 
 def test_legal_hold():
