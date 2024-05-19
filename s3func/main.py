@@ -499,6 +499,36 @@ def delete_objects(s3: botocore.client.BaseClient, bucket: str, obj_keys: List[d
         _ = s3.delete_objects(Bucket=bucket, Delete={'Objects': keys, 'Quiet': True})
 
 
+def get_object_legal_hold(s3: botocore.client.BaseClient, bucket: str, obj_key: str):
+    """
+    Function to get the staus of a legal hold of an object.
+
+    Parameters
+    ----------
+    s3 : boto3.client
+        A boto3 client object
+    bucket : str
+        The S3 bucket.
+    obj_key : str
+        The key name for the uploaded object.
+
+    Returns
+    -------
+    bool
+    """
+    try:
+        resp = s3.get_object_legal_hold(Bucket=bucket, Key=obj_key)
+    except botocore.exceptions.ClientError:
+        return False
+
+    status = resp['LegalHold']['Status']
+
+    if status == 'ON':
+        return True
+    else:
+        return False
+
+
 def put_object_legal_hold(s3: botocore.client.BaseClient, bucket: str, obj_key: str, lock: bool=False):
     """
     Function to put or remove a legal hold on an object.
@@ -530,6 +560,35 @@ def put_object_legal_hold(s3: botocore.client.BaseClient, bucket: str, obj_key: 
     # return resp
 
 
+def get_object_lock_configuration(s3: botocore.client.BaseClient, bucket: str):
+    """
+    Function to whther a bucket is configured to have object locks.
+
+    Parameters
+    ----------
+    s3 : boto3.client
+        A boto3 client object
+    bucket : str
+        The S3 bucket.
+
+    Returns
+    -------
+    bool
+        True if the bucket is configured to have object locks.
+    """
+    try:
+        resp = s3.get_object_lock_configuration(Bucket=bucket)
+    except botocore.exceptions.ClientError:
+        return False
+
+    status = resp['LegalHold']['Status']
+
+    if status == 'ON':
+        return True
+    else:
+        return False
+
+
 def put_object_lock_configuration(s3: botocore.client.BaseClient, bucket: str, lock: bool=False):
     """
     Function to enable or disable object locks for a bucket.
@@ -557,34 +616,6 @@ def put_object_lock_configuration(s3: botocore.client.BaseClient, bucket: str, l
     return resp
 
 
-def get_object_legal_hold(s3: botocore.client.BaseClient, bucket: str, obj_key: str):
-    """
-    Function to get the staus of a legal hold of an object.
-
-    Parameters
-    ----------
-    s3 : boto3.client
-        A boto3 client object
-    bucket : str
-        The S3 bucket.
-    obj_key : str
-        The key name for the uploaded object.
-
-    Returns
-    -------
-    bool
-    """
-    try:
-        resp = s3.get_object_legal_hold(Bucket=bucket, Key=obj_key)
-    except botocore.exceptions.ClientError:
-        return False
-
-    status = resp['LegalHold']['Status']
-
-    if status == 'ON':
-        return True
-    else:
-        return False
 
 
 
