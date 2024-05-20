@@ -10,8 +10,11 @@ Created on Sat Oct  8 11:02:46 2022
 # import pandas as pd
 import urllib3
 import botocore
+import boto3
 from pydantic import BaseModel, HttpUrl
+from urllib3.util import Retry, Timeout
 import datetime
+import copy
 
 #######################################################
 ### Parameters
@@ -22,14 +25,20 @@ import datetime
 #     }
 
 
-#######################################################
-### Helper Functions
+##################################################
+### pydantic classes
+
 
 class ConnectionConfig(BaseModel):
     service_name: str
     endpoint_url: HttpUrl
     aws_access_key_id: str
     aws_secret_access_key: str
+
+
+
+#######################################################
+### Helper Functions
 
 
 def build_s3_params(bucket: str, obj_key: str=None, start_after: str=None, prefix: str=None, delimiter: str=None, max_keys: int=None, key_marker: str=None, object_legal_hold: bool=False, range_start: int=None, range_end: int=None, metadata: dict={}, content_type: str=None, version_id: str=None):
@@ -254,13 +263,13 @@ class S3ListResponse:
     """
 
     """
-    def __init__(self, s3, method, **kwargs):
+    def __init__(self, s3_client, method, **kwargs):
         """
 
         """
         error = {}
 
-        func = getattr(s3, method)
+        func = getattr(s3_client, method)
 
         try:
             resp = func(**kwargs)
@@ -320,7 +329,7 @@ class S3ListResponse:
             if del_markers:
                 metadata['delete_markers'] = del_markers
 
-        except s3.exceptions.ClientError as err:
+        except s3_client.exceptions.ClientError as err:
             resp = err.response.copy()
             status = resp['ResponseMetadata']['HTTPStatusCode']
             metadata = {'status': status}
@@ -338,14 +347,14 @@ class S3Response:
     """
 
     """
-    def __init__(self, s3, method, **kwargs):
+    def __init__(self, s3_client, method, **kwargs):
         """
 
         """
         stream = None
         error = {}
 
-        func = getattr(s3, method)
+        func = getattr(s3_client, method)
 
         try:
             resp = func(**kwargs)
@@ -358,7 +367,7 @@ class S3Response:
                     stream = resp.pop('Body')
                 else:
                     del resp['Body']
-        except s3.exceptions.ClientError as err:
+        except s3_client.exceptions.ClientError as err:
             resp = err.response.copy()
             status = resp['ResponseMetadata']['HTTPStatusCode']
             metadata = {'status': status}

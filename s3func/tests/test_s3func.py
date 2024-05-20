@@ -2,16 +2,23 @@ import pytest
 import os, pathlib
 import uuid
 import io
+import sys
 try:
     import tomllib as toml
 except ImportError:
     import tomli as toml
-from s3func import *
+from s3func import s3, b2, http_url, utils
+
 
 #################################################
 ### Parameters
 
 script_path = pathlib.Path(os.path.realpath(os.path.dirname(__file__)))
+package_path = str(script_path.parent)
+
+# if package_path not in sys.path:
+#     sys.path.insert(0, package_path)
+# import s3, b2, http_url, utils # For running without a package
 
 try:
     with open(script_path.joinpath('s3_config.toml'), "rb") as f:
@@ -36,7 +43,7 @@ obj_key = uuid.uuid4().hex
 base_url = 'https://b2.tethys-ts.xyz/file/' + bucket + '/'
 url = base_url +  obj_key
 
-s3 = s3_client(conn_config)
+s3_client = s3.client(conn_config)
 
 
 ################################################
@@ -64,12 +71,12 @@ def get_logs(request):
         print("executing test failed")
 
         obj_keys = []
-        for js in list_object_versions(s3, bucket):
+        for js in s3.list_object_versions(s3_client, bucket):
             if js['Key'] == obj_key:
                 obj_keys.append({'Key': js['Key'], 'VersionId': js['VersionId']})
 
         if obj_keys:
-            delete_objects(s3, bucket, obj_keys)
+            s3.delete_objects(s3_client, bucket, obj_keys)
 
     # elif request.node.rep_call.passed:
     #     # Add code here to cleanup success scenario
@@ -92,7 +99,7 @@ def get_logs(request):
 #     assert add(a, b) == result
 
 
-def test_put_object():
+def test_s3_put_object():
     """
 
     """
@@ -100,7 +107,7 @@ def test_put_object():
     with io.open(script_path.joinpath(file_name), 'rb') as f:
         obj = f.read()
 
-    resp1 = put_object(s3, bucket, obj_key, obj)
+    resp1 = s3.put_object(s3_client, bucket, obj_key, obj)
 
     meta = resp1.metadata
     if meta['status'] != 200:
@@ -109,7 +116,7 @@ def test_put_object():
     resp1_etag = meta['etag']
 
     ## Upload with a file-obj
-    resp2 = put_object(s3, bucket, obj_key, io.open(script_path.joinpath(file_name), 'rb'))
+    resp2 = s3.put_object(s3_client, bucket, obj_key, io.open(script_path.joinpath(file_name), 'rb'))
 
     meta = resp2.metadata
     if meta['status'] != 200:
@@ -120,74 +127,78 @@ def test_put_object():
     assert resp1_etag == resp2_etag
 
 
-def test_list_objects():
+def test_s3_list_objects():
     """
 
     """
     count = 0
     found_key = False
-    for i, js in enumerate(list_objects(s3, bucket)):
+    resp = s3.list_objects(s3_client, bucket)
+    for i, js in enumerate(resp.metadata['contents']):
         count += 1
-        if js['Key'] == obj_key:
+        if js['key'] == obj_key:
             found_key = True
 
     assert found_key
 
 
-def test_list_object_versions():
+def test_s3_list_object_versions():
     """
 
     """
     count = 0
     found_key = False
-    for i, js in enumerate(list_object_versions(s3, bucket)):
+    resp = s3.list_object_versions(s3_client, bucket)
+    for i, js in enumerate(resp.metadata['versions']):
         count += 1
-        if js['Key'] == obj_key:
+        if js['key'] == obj_key:
             found_key = True
 
     assert found_key
 
 
-def test_get_object():
+def test_s3_get_object():
     """
 
     """
-    stream1 = get_object(obj_key, bucket, s3)
+    stream1 = s3.get_object(obj_key, bucket, s3_client)
     data1 = stream1.stream.read()
 
-    stream2 = get_object(obj_key, bucket, connection_config=conn_config)
+    stream2 = s3.get_object(obj_key, bucket, connection_config=conn_config)
     data2 = stream2.stream.read()
 
     assert data1 == data2
 
 
-def test_url_to_stream():
+def test_http_url_get_object():
     """
 
     """
-    stream1 = url_to_stream(url)
+    stream1 = http_url.get_object(url)
     data1 = stream1.stream.read()
 
-    stream2 = base_url_to_stream(obj_key, base_url)
+    new_url = http_url.join_url_obj_key(obj_key, base_url)
+
+    stream2 = http_url.get_object(new_url)
     data2 = stream2.stream.read()
 
     assert data1 == data2
 
 
-def test_head_object():
+def test_s3_head_object():
     """
 
     """
-    response = head_object(obj_key, bucket, s3)
+    response = s3.head_object(obj_key, bucket, s3_client)
 
     assert 'version_id' in response.metadata
 
 
-def test_url_to_headers():
+def test_http_url_head_object():
     """
 
     """
-    response = url_to_headers(url)
+    response = http_url.head_object(url)
 
     assert 'version_id' in response.metadata
 
@@ -196,37 +207,37 @@ def test_legal_hold():
     """
 
     """
-    hold = get_object_legal_hold(s3, bucket, obj_key)
-    if hold.status != 403:
+    hold = s3.get_object_legal_hold(s3_client, bucket, obj_key)
+    if hold.status != 404:
         raise ValueError("There's a hold, but there shouldn't be.")
 
-    put_hold = put_object_legal_hold(s3, bucket, obj_key, True)
+    put_hold = s3.put_object_legal_hold(s3_client, bucket, obj_key, True)
     if put_hold.status != 200:
         raise ValueError("Creating a hold failed.")
 
-    hold = get_object_legal_hold(s3, bucket, obj_key)
+    hold = s3.get_object_legal_hold(s3_client, bucket, obj_key)
     if not hold.metadata['legal_hold']:
         raise ValueError("There isn't a hold, but there should be.")
 
-    put_hold = put_object_legal_hold(s3, bucket, obj_key, False)
+    put_hold = s3.put_object_legal_hold(s3_client, bucket, obj_key, False)
     if put_hold.status != 200:
         raise ValueError("Removing a hold failed.")
 
-    hold = get_object_legal_hold(s3, bucket, obj_key)
+    hold = s3.get_object_legal_hold(s3_client, bucket, obj_key)
     if hold.metadata['legal_hold']:
         raise ValueError("There's a hold, but there shouldn't be.")
 
-    resp2 = put_object(s3, bucket, obj_key, open(script_path.joinpath(file_name), 'rb'), object_legal_hold=True)
+    _ = s3.put_object(s3_client, bucket, obj_key, open(script_path.joinpath(file_name), 'rb'), object_legal_hold=True)
 
-    hold = get_object_legal_hold(s3, bucket, obj_key)
+    hold = s3.get_object_legal_hold(s3_client, bucket, obj_key)
     if not hold.metadata['legal_hold']:
         raise ValueError("There isn't a hold, but there should be.")
 
-    put_hold = put_object_legal_hold(s3, bucket, obj_key, False)
+    put_hold = s3.put_object_legal_hold(s3_client, bucket, obj_key, False)
     if put_hold.status != 200:
         raise ValueError("Removing a hold failed.")
 
-    hold = get_object_legal_hold(s3, bucket, obj_key)
+    hold = s3.get_object_legal_hold(s3_client, bucket, obj_key)
     if hold.metadata['legal_hold']:
         raise ValueError("There's a hold, but there shouldn't be.")
 
@@ -238,21 +249,49 @@ def test_delete_objects():
 
     """
     obj_keys = []
-    for js in list_object_versions(s3, bucket):
-        if js['Key'] == obj_key:
-            obj_keys.append({'Key': js['Key'], 'VersionId': js['VersionId']})
+    resp = s3.list_object_versions(s3_client, bucket)
+    for js in resp.metadata['versions']:
+        if js['key'] == obj_key:
+            obj_keys.append({'key': js['key'], 'version_id': js['version_id']})
 
-    delete_objects(s3, bucket, obj_keys)
+    s3.delete_objects(s3_client, bucket, obj_keys)
 
     found_key = False
-    for i, js in enumerate(list_object_versions(s3, bucket)):
-        if js['Key'] == obj_key:
+    resp = s3.list_object_versions(s3_client, bucket)
+    for i, js in enumerate(resp.metadata['versions']):
+        if js['key'] == obj_key:
             found_key = True
 
     assert not found_key
 
 
+def test_S3Lock():
+    """
 
+    """
+    s3lock = s3.S3Lock(s3_client, bucket, obj_key)
+
+    other_locks = s3lock.other_locks()
+
+    assert isinstance(other_locks, list)
+
+    if other_locks:
+        _ = s3lock.break_other_locks()
+
+    assert not s3lock.locked()
+
+    assert s3lock.aquire()
+
+    assert s3lock.locked()
+
+    s3lock.release()
+
+    assert not s3lock.locked()
+
+    with s3lock:
+        assert s3lock.locked()
+
+    assert not s3lock.locked()
 
 
 
