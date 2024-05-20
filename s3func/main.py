@@ -22,8 +22,8 @@ import hashlib
 import urllib3
 import orjson
 
-# from . import utils
-import utils
+from . import utils
+# import utils
 
 #######################################################
 ### Parameters
