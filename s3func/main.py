@@ -6,7 +6,7 @@ Created on May 13 08:04:38 2024
 @author: mike
 """
 import io
-import os
+# import os
 from pydantic import HttpUrl
 from typing import List, Union
 import boto3
@@ -15,12 +15,11 @@ import copy
 # import requests
 import urllib.parse
 from urllib3.util import Retry, Timeout
-import datetime
+# import datetime
 import hashlib
 # from requests import Session
 # from requests.adapters import HTTPAdapter
 import urllib3
-import orjson
 
 from . import utils
 # import utils

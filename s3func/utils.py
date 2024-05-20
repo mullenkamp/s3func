@@ -5,7 +5,7 @@ Created on Sat Oct  8 11:02:46 2022
 
 @author: mike
 """
-import io
+# import io
 # import os
 # import pandas as pd
 import urllib3
