@@ -10,8 +10,11 @@ Created on Sat Oct  8 11:02:46 2022
 # import pandas as pd
 import urllib3
 import botocore
+import boto3
 from pydantic import BaseModel, HttpUrl
+from urllib3.util import Retry, Timeout
 import datetime
+import copy
 
 #######################################################
 ### Parameters
@@ -22,14 +25,20 @@ import datetime
 #     }
 
 
-#######################################################
-### Helper Functions
+##################################################
+### pydantic classes
+
 
 class ConnectionConfig(BaseModel):
     service_name: str
     endpoint_url: HttpUrl
     aws_access_key_id: str
     aws_secret_access_key: str
+
+
+
+#######################################################
+### Helper Functions
 
 
 def build_s3_params(bucket: str, obj_key: str=None, start_after: str=None, prefix: str=None, delimiter: str=None, max_keys: int=None, key_marker: str=None, object_legal_hold: bool=False, range_start: int=None, range_end: int=None, metadata: dict={}, content_type: str=None, version_id: str=None):
@@ -49,7 +58,7 @@ def build_s3_params(bucket: str, obj_key: str=None, start_after: str=None, prefi
         params['MaxKeys'] = max_keys
     if key_marker:
         params['KeyMarker'] = key_marker
-    if object_legal_hold:
+    if object_legal_hold: # This is for the put_object request
         params['ObjectLockLegalHoldStatus'] = 'ON'
     if metadata:
         params['Metadata'] = metadata
@@ -183,6 +192,9 @@ def add_metadata_from_s3(response):
     return metadata
 
 
+
+
+
 # class ResponseStream(object):
 #     """
 #     In many applications, you'd like to access a requests response as a file-like object, simply having .read(), .seek(), and .tell() as normal. Especially when you only want to partially download a file, it'd be extra convenient if you could use a normal file interface for it, loading as needed.
@@ -246,42 +258,123 @@ def add_metadata_from_s3(response):
 #             kwargs["timeout"] = self.timeout
 #         return super().send(request, **kwargs)
 
+
+class S3ListResponse:
+    """
+
+    """
+    def __init__(self, s3_client, method, **kwargs):
+        """
+
+        """
+        error = {}
+
+        func = getattr(s3_client, method)
+
+        try:
+            resp = func(**kwargs)
+            status = resp['ResponseMetadata']['HTTPStatusCode']
+
+            contents = []
+            versions = []
+            del_markers = []
+            while True:
+                if 'Versions' in resp:
+                    for js in resp['Versions']:
+                        versions.append({
+                            'etag': js['ETag'].strip('"'),
+                            'size': js['Size'],
+                            'key': js['Key'],
+                            'version_id': js['VersionId'],
+                            'is_latest': js['IsLatest'],
+                            'last_modified': js['LastModified'],
+                            'owner': js['Owner']['ID'],
+                            })
+                    if 'DeleteMarkers' in resp:
+                        for js in resp['DeleteMarkers']:
+                            del_markers.append({
+                                'key': js['Key'],
+                                'version_id': js['VersionId'],
+                                'is_latest': js['IsLatest'],
+                                'last_modified': js['LastModified'],
+                                'owner': js['Owner']['ID'],
+                                })
+                    if 'NextKeyMarker' in resp:
+                        kwargs['KeyMarker'] = resp['NextKeyMarker']
+                    else:
+                        break
+
+                elif 'Contents' in resp:
+                    for js in resp['Contents']:
+                        contents.append({
+                            'etag': js['ETag'].strip('"'),
+                            'size': js['Size'],
+                            'key': js['Key'],
+                            'last_modified': js['LastModified'],
+                            })
+                    if 'NextContinuationToken' in resp:
+                        kwargs['ContinuationToken'] = resp['NextContinuationToken']
+                    else:
+                        break
+                else:
+                    break
+
+                resp = func(**kwargs)
+
+            metadata = {'status': status}
+            if contents:
+                metadata['contents'] = contents
+            if versions:
+                metadata['versions'] = versions
+            if del_markers:
+                metadata['delete_markers'] = del_markers
+
+        except s3_client.exceptions.ClientError as err:
+            resp = err.response.copy()
+            status = resp['ResponseMetadata']['HTTPStatusCode']
+            metadata = {'status': status}
+            error = {'status': status}
+            error.update({key.lower(): val for key, val in resp['Error'].items()})
+
+        self.headers = {'ResponseMetadata': resp['ResponseMetadata']}
+        self.metadata = metadata
+        self.stream = None
+        self.error = error
+        self.status = status
+
+
 class S3Response:
     """
 
     """
-    def __init__(self, s3, method, **kwargs):
+    def __init__(self, s3_client, method, **kwargs):
         """
 
         """
         stream = None
         error = {}
-        headers = {}
 
-        func = getattr(s3, method)
+        func = getattr(s3_client, method)
+
         try:
             resp = func(**kwargs)
             metadata = add_metadata_from_s3(resp)
-            status = 200
-            metadata['status'] = 200
+            status = resp['ResponseMetadata']['HTTPStatusCode']
+            metadata['status'] = status
 
             if 'Body' in resp:
                 if isinstance(resp['Body'], botocore.response.StreamingBody):
                     stream = resp.pop('Body')
                 else:
                     del resp['Body']
-
-            headers = resp
-        except s3.exceptions.NoSuchKey as err:
-            status = 404
+        except s3_client.exceptions.ClientError as err:
+            resp = err.response.copy()
+            status = resp['ResponseMetadata']['HTTPStatusCode']
             metadata = {'status': status}
-            error = {'status': status, 'message': str(err)}
-        except s3.exceptions.ClientError as err:
-            status = 403
-            metadata = {'status': status}
-            error = {'status': status, 'message': str(err)}
+            error = {'status': status}
+            error.update({key.lower(): val for key, val in resp['Error'].items()})
 
-        self.headers = headers
+        self.headers = resp
         self.metadata = metadata
         self.stream = stream
         self.error = error
@@ -300,7 +393,7 @@ class HttpResponse:
         error = {}
         metadata = add_metadata_from_urllib3(response)
 
-        if response.status != 200:
+        if (response.status // 100) != 2:
             error = response.json()
         else:
             stream = response
@@ -318,10 +411,11 @@ class HttpResponse:
 
 
 
+# try:
+#     resp = func(Bucket=bucket, Key=obj_key)
 
-
-
-
+# except s3.exceptions.ClientError as err:
+#     error = err
 
 
 
