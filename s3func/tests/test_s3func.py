@@ -153,10 +153,10 @@ def test_get_object():
 
     """
     stream1 = get_object(obj_key, bucket, s3)
-    data1 = stream1.read()
+    data1 = stream1.stream.read()
 
     stream2 = get_object(obj_key, bucket, connection_config=conn_config)
-    data2 = stream2.read()
+    data2 = stream2.stream.read()
 
     assert data1 == data2
 
@@ -166,10 +166,10 @@ def test_url_to_stream():
 
     """
     stream1 = url_to_stream(url)
-    data1 = stream1.read()
+    data1 = stream1.stream.read()
 
     stream2 = base_url_to_stream(obj_key, base_url)
-    data2 = stream2.read()
+    data2 = stream2.stream.read()
 
     assert data1 == data2
 
@@ -197,31 +197,37 @@ def test_legal_hold():
 
     """
     hold = get_object_legal_hold(s3, bucket, obj_key)
-    if hold:
+    if hold.status != 403:
         raise ValueError("There's a hold, but there shouldn't be.")
 
-    put_object_legal_hold(s3, bucket, obj_key, True)
+    put_hold = put_object_legal_hold(s3, bucket, obj_key, True)
+    if put_hold.status != 200:
+        raise ValueError("Creating a hold failed.")
 
     hold = get_object_legal_hold(s3, bucket, obj_key)
-    if not hold:
+    if not hold.metadata['legal_hold']:
         raise ValueError("There isn't a hold, but there should be.")
 
-    put_object_legal_hold(s3, bucket, obj_key, False)
+    put_hold = put_object_legal_hold(s3, bucket, obj_key, False)
+    if put_hold.status != 200:
+        raise ValueError("Removing a hold failed.")
 
     hold = get_object_legal_hold(s3, bucket, obj_key)
-    if hold:
+    if hold.metadata['legal_hold']:
         raise ValueError("There's a hold, but there shouldn't be.")
 
     resp2 = put_object(s3, bucket, obj_key, open(script_path.joinpath(file_name), 'rb'), object_legal_hold=True)
 
     hold = get_object_legal_hold(s3, bucket, obj_key)
-    if not hold:
+    if not hold.metadata['legal_hold']:
         raise ValueError("There isn't a hold, but there should be.")
 
-    put_object_legal_hold(s3, bucket, obj_key, False)
+    put_hold = put_object_legal_hold(s3, bucket, obj_key, False)
+    if put_hold.status != 200:
+        raise ValueError("Removing a hold failed.")
 
     hold = get_object_legal_hold(s3, bucket, obj_key)
-    if hold:
+    if hold.metadata['legal_hold']:
         raise ValueError("There's a hold, but there shouldn't be.")
 
     assert True

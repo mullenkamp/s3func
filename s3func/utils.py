@@ -8,6 +8,8 @@ Created on Sat Oct  8 11:02:46 2022
 # import io
 # import os
 # import pandas as pd
+import urllib3
+import botocore
 from pydantic import BaseModel, HttpUrl
 import datetime
 
@@ -159,13 +161,24 @@ def add_metadata_from_s3(response):
     else:
         metadata = {}
 
-    metadata['etag'] = response['ETag'].strip('"')
-    metadata['version_id'] = response['VersionId']
-    metadata['last_modified'] = datetime.datetime.fromtimestamp(int(metadata['version_id'].split('_u')[1]) * 0.001, datetime.timezone.utc)
+    if 'ETag' in response:
+        metadata['etag'] = response['ETag'].strip('"')
+    if 'VersionId' in response:
+        metadata['version_id'] = response['VersionId']
+        metadata['last_modified'] = datetime.datetime.fromtimestamp(int(metadata['version_id'].split('_u')[1]) * 0.001, datetime.timezone.utc)
     if 'ContentLength' in response:
         metadata['content_length'] = response['ContentLength']
     if 'HTTPStatusCode' in response['ResponseMetadata']:
         metadata['status'] = response['ResponseMetadata']['HTTPStatusCode']
+
+    if 'LegalHold' in response:
+        if 'Status' in response['LegalHold']:
+            status = response['LegalHold']['Status']
+
+            if status == 'ON':
+                metadata['legal_hold'] = True
+            else:
+                metadata['legal_hold'] = False
 
     return metadata
 
@@ -234,10 +247,69 @@ def add_metadata_from_s3(response):
 #         return super().send(request, **kwargs)
 
 class S3Response:
-    pass
+    """
 
-class S3ErrorResponse:
-    pass
+    """
+    def __init__(self, s3, method, **kwargs):
+        """
+
+        """
+        stream = None
+        error = {}
+        headers = {}
+
+        func = getattr(s3, method)
+        try:
+            resp = func(**kwargs)
+            metadata = add_metadata_from_s3(resp)
+            status = 200
+            metadata['status'] = 200
+
+            if 'Body' in resp:
+                if isinstance(resp['Body'], botocore.response.StreamingBody):
+                    stream = resp.pop('Body')
+                else:
+                    del resp['Body']
+
+            headers = resp
+        except s3.exceptions.NoSuchKey as err:
+            status = 404
+            metadata = {'status': status}
+            error = {'status': status, 'message': str(err)}
+        except s3.exceptions.ClientError as err:
+            status = 403
+            metadata = {'status': status}
+            error = {'status': status, 'message': str(err)}
+
+        self.headers = headers
+        self.metadata = metadata
+        self.stream = stream
+        self.error = error
+        self.status = status
+
+
+class HttpResponse:
+    """
+
+    """
+    def __init__(self, response: urllib3.HTTPResponse):
+        """
+
+        """
+        stream = None
+        error = {}
+        metadata = add_metadata_from_urllib3(response)
+
+        if response.status != 200:
+            error = response.json()
+        else:
+            stream = response
+
+        self.headers = dict(response.headers)
+        self.metadata = metadata
+        self.stream = stream
+        self.error = error
+        self.status = response.status
 
 
 

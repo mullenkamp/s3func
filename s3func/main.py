@@ -6,7 +6,7 @@ Created on May 13 08:04:38 2024
 @author: mike
 """
 import io
-import os
+# import os
 from pydantic import HttpUrl
 from typing import List, Union
 import boto3
@@ -15,7 +15,7 @@ import copy
 # import requests
 import urllib.parse
 from urllib3.util import Retry, Timeout
-import datetime
+# import datetime
 import hashlib
 # from requests import Session
 # from requests.adapters import HTTPAdapter
@@ -34,6 +34,9 @@ from . import utils
 
 # multipart_size = 2**28
 
+b2_auth_url = 'https://api.backblazeb2.com/b2api/v3/b2_authorize_account'
+
+available_capabilities = [ "listKeys", "writeKeys", "deleteKeys", "listAllBucketNames", "listBuckets", "readBuckets", "writeBuckets", "deleteBuckets", "readBucketRetentions", "writeBucketRetentions", "readBucketEncryption", "writeBucketEncryption", "writeBucketNotifications", "listFiles", "readFiles", "shareFiles", "writeFiles", "deleteFiles", "readBucketNotifications", "readFileLegalHolds", "writeFileLegalHolds", "readFileRetentions", "writeFileRetentions", "bypassGovernance" ]
 
 ##################################################
 ### S3 Client and url session
@@ -165,10 +168,9 @@ def url_to_stream(url: HttpUrl, session: urllib3.poolmanager.PoolManager=None, r
     headers = utils.build_url_headers(range_start=range_start, range_end=range_end)
 
     response = session.request('get', url, headers=headers, preload_content=False)
-    metadata = utils.add_metadata_from_urllib3(response)
-    response.metadata = metadata
+    resp = utils.HttpResponse(response)
 
-    return response
+    return resp
 
 
 def base_url_to_stream(obj_key: str, base_url: HttpUrl, session: urllib3.poolmanager.PoolManager=None, range_start: int=None, range_end: int=None, chunk_size: int=524288, **url_session_kwargs):
@@ -178,9 +180,9 @@ def base_url_to_stream(obj_key: str, base_url: HttpUrl, session: urllib3.poolman
     if not base_url.endswith('/'):
         base_url += '/'
     url = urllib.parse.urljoin(base_url, obj_key)
-    stream = url_to_stream(url, session, range_start, range_end, chunk_size, **url_session_kwargs)
+    response = url_to_stream(url, session, range_start, range_end, chunk_size, **url_session_kwargs)
 
-    return stream
+    return response
 
 
 def get_object(obj_key: str, bucket: str, s3: botocore.client.BaseClient = None, version_id: str=None, range_start: int=None, range_end: int=None, chunk_size: int=524288, **s3_client_kwargs):
@@ -216,17 +218,9 @@ def get_object(obj_key: str, bucket: str, s3: botocore.client.BaseClient = None,
 
     params = utils.build_s3_params(bucket, obj_key=obj_key, version_id=version_id, range_start=range_start, range_end=range_end)
 
-    try:
-        response = s3.get_object(**params)
-        stream = response['Body']
-        metadata = utils.add_metadata_from_s3(response)
-    except s3.exceptions.NoSuchKey:
-        stream = utils.S3ErrorResponse()
-        metadata = {'status': 404}
+    s3resp = utils.S3Response(s3, 'get_object', **params)
 
-    stream.metadata = metadata
-
-    return stream
+    return s3resp
 
 
 def get_object_combo(obj_key: str, bucket: str, s3: botocore.client.BaseClient = None, session: urllib3.poolmanager.PoolManager=None, base_url: HttpUrl=None, version_id: str=None, range_start: int=None, range_end: int=None, chunk_size: int=524288, **kwargs):
@@ -279,11 +273,9 @@ def url_to_headers(url: HttpUrl, session: urllib3.poolmanager.PoolManager=None, 
         session = url_session(**url_session_kwargs)
 
     response = session.request('head', url)
+    resp = utils.HttpResponse(response)
 
-    metadata = utils.add_metadata_from_urllib3(response)
-    response.metadata = metadata
-
-    return response
+    return resp
 
 
 def base_url_to_headers(obj_key: str, base_url: HttpUrl, session: urllib3.poolmanager.PoolManager=None, **url_session_kwargs):
@@ -325,18 +317,9 @@ def head_object(obj_key: str, bucket: str, s3: botocore.client.BaseClient = None
 
     params = utils.build_s3_params(bucket, obj_key=obj_key, version_id=version_id)
 
-    try:
-        response = utils.S3Response()
-        response.headers = s3.head_object(**params)
-        metadata = utils.add_metadata_from_s3(response.headers)
+    s3resp = utils.S3Response(s3, 'head_object', **params)
 
-    except s3.exceptions.NoSuchKey:
-        response = utils.S3ErrorResponse()
-        metadata = {'status': 404}
-
-    response.metadata = metadata
-
-    return response
+    return s3resp
 
 
 def put_object(s3: botocore.client.BaseClient, bucket: str, obj_key: str, obj: Union[bytes, io.BufferedIOBase], metadata: dict={}, content_type: str=None, object_legal_hold: bool=False):
@@ -368,18 +351,12 @@ def put_object(s3: botocore.client.BaseClient, bucket: str, obj_key: str, obj: U
     if isinstance(obj, (bytes, bytearray)) and ('content-md5' not in metadata):
         metadata['content-md5'] = hashlib.md5(obj).hexdigest()
     params = utils.build_s3_params(bucket, obj_key=obj_key, metadata=metadata, content_type=content_type, object_legal_hold=object_legal_hold)
+    params['Body'] = obj
 
-    try:
-        response = utils.S3Response()
-        response.headers = s3.put_object(Body=obj, **params)
-        metadata = utils.add_metadata_from_s3(response.headers)
-    except s3.exceptions.ClientError:
-        response = utils.S3ErrorResponse()
-        metadata = {'status': 404}
+    s3resp = utils.S3Response(s3, 'put_object', **params)
+    s3resp.metadata.update(metadata)
 
-    response.metadata = metadata
-
-    return response
+    return s3resp
 
 
 #####################################
@@ -499,9 +476,35 @@ def delete_objects(s3: botocore.client.BaseClient, bucket: str, obj_keys: List[d
         _ = s3.delete_objects(Bucket=bucket, Delete={'Objects': keys, 'Quiet': True})
 
 
+########################################################
+### S3 Locks and holds
+
+
+def get_object_legal_hold(s3: botocore.client.BaseClient, bucket: str, obj_key: str):
+    """
+    Function to get the staus of a legal hold of an object. The user must have s3:GetObjectLegalHold or b2:readFileLegalHolds permissions for this request.
+
+    Parameters
+    ----------
+    s3 : boto3.client
+        A boto3 client object
+    bucket : str
+        The S3 bucket.
+    obj_key : str
+        The key name for the uploaded object.
+
+    Returns
+    -------
+    S3Response
+    """
+    s3resp = utils.S3Response(s3, 'get_object_legal_hold', Bucket=bucket, Key=obj_key)
+
+    return s3resp
+
+
 def put_object_legal_hold(s3: botocore.client.BaseClient, bucket: str, obj_key: str, lock: bool=False):
     """
-    Function to put or remove a legal hold on an object.
+    Function to put or remove a legal hold on an object. The user must have s3:PutObjectLegalHold or b2:writeFileLegalHolds permissions for this request.
 
     Parameters
     ----------
@@ -523,16 +526,38 @@ def put_object_legal_hold(s3: botocore.client.BaseClient, bucket: str, obj_key: 
     else:
         hold = {'Status': 'OFF'}
 
-    resp = s3.put_object_legal_hold(Bucket=bucket, Key=obj_key, LegalHold=hold)
-    if resp['ResponseMetadata']['HTTPStatusCode'] != 200:
-        raise urllib.error.HTTPError(resp['ResponseMetadata']['HTTPStatusCode'])
+    # resp = s3.put_object_legal_hold(Bucket=bucket, Key=obj_key, LegalHold=hold)
+    # if resp['ResponseMetadata']['HTTPStatusCode'] != 200:
+    #     raise urllib.error.HTTPError(resp['ResponseMetadata']['HTTPStatusCode'])
 
-    # return resp
+    s3resp = utils.S3Response(s3, 'put_object_legal_hold', Bucket=bucket, Key=obj_key, LegalHold=hold)
+
+    return s3resp
+
+
+def get_object_lock_configuration(s3: botocore.client.BaseClient, bucket: str):
+    """
+    Function to whther a bucket is configured to have object locks. The user must have s3:GetBucketObjectLockConfiguration or b2:readBucketRetentions permissions for this request.
+
+    Parameters
+    ----------
+    s3 : boto3.client
+        A boto3 client object
+    bucket : str
+        The S3 bucket.
+
+    Returns
+    -------
+    S3Reponse
+    """
+    s3resp = utils.S3Response(s3, 'get_object_lock_configuration', Bucket=bucket)
+
+    return s3resp
 
 
 def put_object_lock_configuration(s3: botocore.client.BaseClient, bucket: str, lock: bool=False):
     """
-    Function to enable or disable object locks for a bucket.
+    Function to enable or disable object locks for a bucket. The user must have s3:PutBucketObjectLockConfiguration or b2:writeBucketRetentions permissions for this request.
 
     Parameters
     ----------
@@ -552,39 +577,100 @@ def put_object_lock_configuration(s3: botocore.client.BaseClient, bucket: str, l
     else:
         hold = {'ObjectLockEnabled': 'Disable'}
 
-    resp = s3.put_object_lock_configuration(Bucket=bucket, ObjectLockConfiguration=hold)
+    # resp = s3.put_object_lock_configuration(Bucket=bucket, ObjectLockConfiguration=hold)
+    s3resp = utils.S3Response(s3, 'put_object_lock_configuration', Bucket=bucket, ObjectLockConfiguration=hold)
+
+    return s3resp
+
+
+class S3Lock:
+    """
+
+    """
+    def __init__(self, s3: botocore.client.BaseClient, bucket: str, obj_key: str):
+        """
+
+        """
+
+
+
+#########################################################
+### Backblaze
+
+
+def get_authorization_b2(username, password, session=None, **url_session_kwargs):
+    """
+
+    """
+    if session is None:
+        session = url_session(**url_session_kwargs)
+
+    headers = urllib3.make_headers(basic_auth=f'{username}:{password}')
+
+    response = session.request('get', b2_auth_url, headers=headers)
+    resp = utils.HttpResponse(response)
 
     return resp
 
 
-def get_object_legal_hold(s3: botocore.client.BaseClient, bucket: str, obj_key: str):
+def create_app_key_b2(auth_dict: dict, capabilities: List[str], key_name: str, duration: int=None, bucket_id: str=None, prefix: str=None, session=None, **url_session_kwargs):
     """
-    Function to get the staus of a legal hold of an object.
 
-    Parameters
-    ----------
-    s3 : boto3.client
-        A boto3 client object
-    bucket : str
-        The S3 bucket.
-    obj_key : str
-        The key name for the uploaded object.
-
-    Returns
-    -------
-    bool
     """
-    try:
-        resp = s3.get_object_legal_hold(Bucket=bucket, Key=obj_key)
-    except botocore.exceptions.ClientError:
-        return False
+    account_id = auth_dict['accountId']
+    api_url = auth_dict['apiInfo']['storageApi']['apiUrl']
+    auth_token = auth_dict['authorizationToken']
 
-    status = resp['LegalHold']['Status']
+    fields = {
+        'accountId': account_id,
+        'capabilities': capabilities,
+        'keyName': key_name}
 
-    if status == 'ON':
-        return True
-    else:
-        return False
+    if isinstance(duration, int):
+        fields['validDurationInSeconds'] = duration
+
+    if isinstance(bucket_id, str):
+        fields['bucketId'] = bucket_id
+
+    if isinstance(prefix, str):
+        fields['namePrefix'] = prefix
+
+    url = urllib.parse.urljoin(api_url, '/b2api/v3/b2_create_key')
+
+    if session is None:
+        session = url_session(**url_session_kwargs)
+
+    response = session.request('post', url, json=fields, headers={'Authorization': auth_token})
+    resp = utils.HttpResponse(response)
+
+    return resp
+
+
+def list_buckets_b2(auth_dict: dict, session=None, **url_session_kwargs):
+    """
+
+    """
+    account_id = auth_dict['accountId']
+    api_url = auth_dict['apiInfo']['storageApi']['apiUrl']
+    auth_token = auth_dict['authorizationToken']
+
+    fields = {
+        'accountId': account_id,
+        }
+
+    url = urllib.parse.urljoin(api_url, '/b2api/v3/b2_list_buckets')
+
+    if session is None:
+        session = url_session(**url_session_kwargs)
+
+    response = session.request('post', url, json=fields, headers={'Authorization': auth_token})
+    resp = utils.HttpResponse(response)
+
+    return resp
+
+
+
+
 
 
 
