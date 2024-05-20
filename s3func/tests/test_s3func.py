@@ -321,5 +321,3 @@ def test_delete_objects():
 
 
 
-
-

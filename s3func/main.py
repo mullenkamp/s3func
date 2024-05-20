@@ -15,14 +15,17 @@ import copy
 # import requests
 import urllib.parse
 from urllib3.util import Retry, Timeout
-# import datetime
+import datetime
 import hashlib
 # from requests import Session
 # from requests.adapters import HTTPAdapter
 import urllib3
+import uuid
+from time import sleep
+from timeit import default_timer
 
-from . import utils
-# import utils
+# from . import utils
+import utils
 
 #######################################################
 ### Parameters
@@ -363,7 +366,7 @@ def put_object(s3: botocore.client.BaseClient, bucket: str, obj_key: str, obj: U
 ### Other S3 operations
 
 
-def list_objects(s3: botocore.client.BaseClient, bucket: str, prefix: str=None, start_after: str=None, delimiter: str=None, max_keys: int=None, continuation_token: str=None):
+def list_objects(s3: botocore.client.BaseClient, bucket: str, prefix: str=None, start_after: str=None, delimiter: str=None, max_keys: int=None):
     """
     Wrapper S3 function around the list_objects_v2 base function.
 
@@ -379,41 +382,21 @@ def list_objects(s3: botocore.client.BaseClient, bucket: str, prefix: str=None, 
         The S3 key to start after.
     delimiter : str
         A delimiter is a character you use to group keys.
-    continuation_token : str
-        ContinuationToken indicates to S3 that the list is being continued on this bucket with a token.
-    date_format : str
-        If the object key has a date in it, pass a date format string to parse and add a column called KeyDate.
+    max_keys : int
+        Sets the maximum number of keys returned in the response. By default, the action returns up to 1,000 key names. The response might contain fewer keys but will never contain more.
 
     Returns
     -------
-    dict
+    S3ListResponse
     """
     params = utils.build_s3_params(bucket, start_after=start_after, prefix=prefix, delimiter=delimiter, max_keys=max_keys)
 
-    if continuation_token is not None:
-        params['ContinuationToken'] = continuation_token
+    resp = utils.S3ListResponse(s3, 'list_objects_v2', **params)
 
-    # js = []
-    while True:
-        js1 = s3.list_objects_v2(**params)
-
-        if 'Contents' in js1:
-            # js.extend(js1['Contents'])
-            for js in js1['Contents']:
-                etag = js['ETag'].strip('"')
-                js['ETag'] = etag
-                yield js
-            if 'NextContinuationToken' in js1:
-                continuation_token = js1['NextContinuationToken']
-            else:
-                break
-        else:
-            break
-
-    # return js
+    return resp
 
 
-def list_object_versions(s3: botocore.client.BaseClient, bucket: str, start_after: str=None, prefix: str=None, delimiter: str=None, max_keys: int=None, delete_markers: bool=False):
+def list_object_versions(s3: botocore.client.BaseClient, bucket: str, prefix: str=None, start_after: str=None, delimiter: str=None, max_keys: int=None):
     """
     Wrapper S3 function around the list_object_versions base function.
 
@@ -429,39 +412,33 @@ def list_object_versions(s3: botocore.client.BaseClient, bucket: str, start_afte
         The S3 key to start after.
     delimiter : str or None
         A delimiter is a character you use to group keys.
-    date_format : str
-        If the object key has a date in it, pass a date format string to parse and add a column called KeyDate.
+    max_keys : int
+        Sets the maximum number of keys returned in the response. By default, the action returns up to 1,000 key names. The response might contain fewer keys but will never contain more.
 
     Returns
     -------
-    dict
+    S3ListResponse
     """
     params = utils.build_s3_params(bucket, key_marker=start_after, prefix=prefix, delimiter=delimiter, max_keys=max_keys)
 
-    # js = []
-    # dm = []
-    while True:
-        js1 = s3.list_object_versions(**params)
+    resp = utils.S3ListResponse(s3, 'list_object_versions', **params)
 
-        if 'Versions' in js1:
-            # js.extend(js1['Versions'])
-            for js in js1['Versions']:
-                etag = js['ETag'].strip('"')
-                js['ETag'] = etag
-                yield js
-            # if 'DeleteMarkers' in js1:
-            #     dm.extend(js1['DeleteMarkers'])
-            if 'NextKeyMarker' in js1:
-                params['KeyMarker'] = js1['NextKeyMarker']
-            else:
-                break
-        else:
-            break
+    return resp
 
-    # if delete_markers:
-    #     return js, dm
-    # else:
-    #     return js
+
+def delete_object(s3: botocore.client.BaseClient, bucket: str, obj_key: str, version_id: str=None):
+    """
+    obj_keys must be a list of dictionaries. The dicts must have the keys named Key and VersionId derived from the list_object_versions function. This function will automatically separate the list into 1000 count list chunks (required by the delete_objects request).
+
+    Returns
+    -------
+    None
+    """
+    params = utils.build_s3_params(bucket, obj_key=obj_key, version_id=version_id)
+
+    s3resp = utils.S3Response(s3, 'delete_object', **params)
+
+    return s3resp
 
 
 def delete_objects(s3: botocore.client.BaseClient, bucket: str, obj_keys: List[dict]):
@@ -480,7 +457,7 @@ def delete_objects(s3: botocore.client.BaseClient, bucket: str, obj_keys: List[d
 ### S3 Locks and holds
 
 
-def get_object_legal_hold(s3: botocore.client.BaseClient, bucket: str, obj_key: str):
+def get_object_legal_hold(s3: botocore.client.BaseClient, bucket: str, obj_key: str, version_id: str=None):
     """
     Function to get the staus of a legal hold of an object. The user must have s3:GetObjectLegalHold or b2:readFileLegalHolds permissions for this request.
 
@@ -497,12 +474,14 @@ def get_object_legal_hold(s3: botocore.client.BaseClient, bucket: str, obj_key: 
     -------
     S3Response
     """
-    s3resp = utils.S3Response(s3, 'get_object_legal_hold', Bucket=bucket, Key=obj_key)
+    params = utils.build_s3_params(bucket, obj_key=obj_key, version_id=version_id)
+
+    s3resp = utils.S3Response(s3, 'get_object_legal_hold', **params)
 
     return s3resp
 
 
-def put_object_legal_hold(s3: botocore.client.BaseClient, bucket: str, obj_key: str, lock: bool=False):
+def put_object_legal_hold(s3: botocore.client.BaseClient, bucket: str, obj_key: str, lock: bool=False, version_id: str=None):
     """
     Function to put or remove a legal hold on an object. The user must have s3:PutObjectLegalHold or b2:writeFileLegalHolds permissions for this request.
 
@@ -526,11 +505,10 @@ def put_object_legal_hold(s3: botocore.client.BaseClient, bucket: str, obj_key: 
     else:
         hold = {'Status': 'OFF'}
 
-    # resp = s3.put_object_legal_hold(Bucket=bucket, Key=obj_key, LegalHold=hold)
-    # if resp['ResponseMetadata']['HTTPStatusCode'] != 200:
-    #     raise urllib.error.HTTPError(resp['ResponseMetadata']['HTTPStatusCode'])
+    params = utils.build_s3_params(bucket, obj_key=obj_key, version_id=version_id)
+    params['LegalHold'] = hold
 
-    s3resp = utils.S3Response(s3, 'put_object_legal_hold', Bucket=bucket, Key=obj_key, LegalHold=hold)
+    s3resp = utils.S3Response(s3, 'put_object_legal_hold', **params)
 
     return s3resp
 
@@ -591,6 +569,119 @@ class S3Lock:
         """
 
         """
+        obj_lock_key = obj_key + '.lock'
+        _ = self._list_object_versions(s3, bucket, obj_lock_key)
+
+        self._s3 = s3
+        self._bucket = bucket
+        self._obj_lock_key = obj_lock_key
+        self._obj_key = obj_key
+        self._version_id = ''
+        self._last_modified = None
+        self._uuid = uuid.uuid4().bytes
+
+
+    @staticmethod
+    def _list_object_versions(s3, bucket, obj_lock_key):
+        """
+
+        """
+        objs = list_object_versions(s3, bucket, prefix=obj_lock_key)
+        if objs.status in (401, 403):
+            raise urllib3.exceptions.HTTPError(str(objs.error)[1:-1])
+
+        return objs
+
+
+    def other_locks(self):
+        """
+
+        """
+        objs = self._list_object_versions(self._s3, self._bucket, self._obj_lock_key)
+
+        meta = objs.metadata
+        if 'versions' in meta:
+            return [l for l in meta['versions'] if l['version_id'] != self._version_id]
+        else:
+            return []
+
+
+    def break_other_locks(self):
+        """
+
+        """
+        objs = self._list_object_versions(self._s3, self._bucket, self._obj_lock_key)
+
+        meta = objs.metadata
+        obj_keys = []
+        if 'versions' in meta:
+            for l in meta['versions']:
+                obj_keys.append({'Key': l['key'], 'VersionId': l['version_id']})
+
+            delete_objects(self._s3, self._bucket, obj_keys)
+
+        return obj_keys
+
+
+    def locked(self):
+        """
+
+        """
+        objs = self._list_object_versions(self._s3, self._bucket, self._obj_lock_key)
+        meta = objs.metadata
+        if 'versions' in meta:
+            return True
+        else:
+            return False
+
+
+    def aquire(self, blocking=True, timeout=-1):
+        """
+
+        """
+        if self._last_modified is None:
+            resp = put_object(self._s3, self._bucket, self._obj_lock_key, self._uuid)
+            if resp.status != 200:
+                raise urllib3.exceptions.HTTPError(str(resp.error)[1:-1])
+            self._version_id = resp.metadata['version_id']
+            self._last_modified = resp.metadata['last_modified']
+
+            objs = self.other_locks()
+
+            objs2 = [l for l in objs if l['last_modified'] < self._last_modified]
+
+            if objs2:
+                start_time = default_timer()
+
+                while blocking:
+                    sleep(2)
+                    objs = self.other_locks()
+                    objs2 = [l for l in objs if l['last_modified'] < self._last_modified]
+                    if len(objs2) == 0:
+                        return True
+                    else:
+                        if timeout > 0:
+                            duration = default_timer() - start_time
+                            if duration > timeout:
+                                break
+
+                return False
+            else:
+                return True
+        else:
+            return True
+
+
+    def release(self):
+        """
+
+        """
+        if self._last_modified is not None:
+            _ = delete_object(self._s3, self._bucket, self._obj_lock_key, self._version_id)
+            self._version_id = ''
+            self._last_modified = None
+
+
 
 
 
