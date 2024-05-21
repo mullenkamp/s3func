@@ -23,6 +23,7 @@ import urllib3
 # import uuid
 from time import sleep
 from timeit import default_timer
+import datetime
 
 # from . import http_url
 # import http_url
@@ -511,6 +512,61 @@ class S3Lock:
         return res
 
 
+    @staticmethod
+    def _check_for_older_versions(objs, last_modified, version_id):
+        """
+
+        """
+        res = []
+        for obj in objs:
+            if obj['lock_type'] == 'exclusive':
+                if obj['last_modified'] == last_modified:
+                    if obj['version_id'] < version_id:
+                        res.append(obj)
+                elif obj['last_modified'] < last_modified:
+                    res.append(obj)
+
+        return res
+
+
+    def _delete_lock_object(self):
+        """
+
+        """
+        _ = delete_object(self._s3_client, self._bucket, self._obj_lock_key, self._version_id)
+        self._version_id = ''
+        self._last_modified = None
+
+
+    def _put_object(self, body):
+        """
+
+        """
+        counter = 0
+        while True:
+            counter += 1
+            start_time = datetime.datetime.now(datetime.timezone.utc)
+            resp = put_object(self._s3_client, self._bucket, self._obj_lock_key, body)
+            if resp.status != 200:
+                raise urllib3.exceptions.HTTPError(str(resp.error)[1:-1])
+            # header_time = datetime.datetime.strptime(resp.headers['ResponseMetadata']['HTTPHeaders']['date'], '%a, %d %b %Y %H:%M:%S %Z').replace(tzinfo=datetime.timezone.utc)
+            # to_header_time = (header_time - start_time).total_seconds()
+            mod_time = resp.metadata['last_modified']
+            to_mod_time = (mod_time - start_time).total_seconds()
+
+            if to_mod_time < 2.5:
+                diff_time = 2.5 - to_mod_time
+                sleep(diff_time)
+                break
+            else:
+                self._delete_lock_object()
+                if counter == 5:
+                    raise urllib3.exceptions.HTTPError('put_object takes too long to complete.')
+
+        self._version_id = resp.metadata['version_id']
+        self._last_modified = resp.metadata['last_modified']
+
+
     def other_locks(self):
         """
         Method to list all of the other locks that might also be on the object.
@@ -585,15 +641,9 @@ class S3Lock:
                 body = b'1'
             else:
                 body = b'0'
-            resp = put_object(self._s3_client, self._bucket, self._obj_lock_key, body)
-            if resp.status != 200:
-                raise urllib3.exceptions.HTTPError(str(resp.error)[1:-1])
-            self._version_id = resp.metadata['version_id']
-            self._last_modified = resp.metadata['last_modified']
-
+            self._put_object(body)
             objs = self.other_locks()
-
-            objs2 = [l for l in objs if (l['last_modified'] < self._last_modified) and (l['lock_type'] == 'exclusive')]
+            objs2 = self._check_for_older_versions(objs, self._last_modified, self._version_id)
 
             if objs2:
                 start_time = default_timer()
@@ -601,7 +651,7 @@ class S3Lock:
                 while blocking:
                     sleep(2)
                     objs = self.other_locks()
-                    objs2 = [l for l in objs if (l['last_modified'] < self._last_modified) and (l['lock_type'] == 'exclusive')]
+                    objs2 = self._check_for_older_versions(objs, self._last_modified, self._version_id)
                     if len(objs2) == 0:
                         return True
                     else:
@@ -609,6 +659,9 @@ class S3Lock:
                             duration = default_timer() - start_time
                             if duration > timeout:
                                 break
+
+                ## If the user makes it non-blocking or the timer runs out, the object version needs to be removed
+                self._delete_lock_object()
 
                 return False
             else:
@@ -622,9 +675,7 @@ class S3Lock:
         Release the lock. It can only release the lock that was created via this instance. Returns nothing.
         """
         if self._last_modified is not None:
-            _ = delete_object(self._s3_client, self._bucket, self._obj_lock_key, self._version_id)
-            self._version_id = ''
-            self._last_modified = None
+            self._delete_lock_object()
 
     def __enter__(self):
         self.aquire()
