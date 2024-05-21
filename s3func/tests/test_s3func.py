@@ -3,6 +3,9 @@ import os, pathlib
 import uuid
 import io
 import sys
+from time import sleep
+from timeit import default_timer
+import datetime
 try:
     import tomllib as toml
 except ImportError:
@@ -18,7 +21,7 @@ package_path = str(script_path.parent)
 
 # if package_path not in sys.path:
 #     sys.path.insert(0, package_path)
-# import s3, b2, http_url, utils # For running without a package
+# import s3, http_url # For running without a package
 
 try:
     with open(script_path.joinpath('s3_config.toml'), "rb") as f:
@@ -294,18 +297,52 @@ def test_S3Lock():
     assert not s3lock.locked()
 
 
+def s3lock_loop():
+    """
+
+    """
+    s3lock = s3.S3Lock(s3_client, bucket, obj_key)
+
+    for i in range(100):
+        print(i)
+        with s3lock:
+            mod_date = s3lock._last_modified
+            others = s3lock.other_locks()
+            if others:
+                for other_one in others:
+                    other_mod_date = other_one['last_modified']
+                    if other_mod_date < mod_date:
+                        raise ValueError('Other mod date was earlier.')
 
 
+def resp_delay_test(n):
+    """
 
+    """
+    s3lock = s3.S3Lock(s3_client, bucket, obj_key)
 
+    to_mod_time = []
+    to_header_time = []
+    to_return_time = []
 
+    for i in range(n):
+        print(i)
+        start_time = datetime.datetime.now(datetime.timezone.utc)
+        resp = s3.put_object(s3lock._s3_client, s3lock._bucket, s3lock._obj_lock_key, b'1')
+        return_time = datetime.datetime.now(datetime.timezone.utc)
+        header_time = datetime.datetime.strptime(resp.headers['ResponseMetadata']['HTTPHeaders']['date'], '%a, %d %b %Y %H:%M:%S %Z').replace(tzinfo=datetime.timezone.utc)
+        mod_time = resp.metadata['last_modified']
+        _ = s3.delete_object(s3lock._s3_client, s3lock._bucket, s3lock._obj_lock_key, resp.metadata['version_id'])
 
+        to_mod_time.append((mod_time - start_time).total_seconds())
+        to_header_time.append((header_time - start_time).total_seconds())
+        to_return_time.append((return_time - start_time).total_seconds())
 
+    # mod_time_mean = to_mod_time/n
+    # header_time_mean = to_header_time/n
+    # return_time_mean = to_return_time/n
 
-
-
-
-
+    return to_mod_time, to_header_time, to_return_time
 
 
 

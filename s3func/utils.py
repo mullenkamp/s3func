@@ -10,11 +10,9 @@ Created on Sat Oct  8 11:02:46 2022
 # import pandas as pd
 import urllib3
 import botocore
-import boto3
 from pydantic import BaseModel, HttpUrl
 from urllib3.util import Retry, Timeout
 import datetime
-import copy
 
 #######################################################
 ### Parameters
