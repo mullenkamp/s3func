@@ -39,7 +39,7 @@ requirements:
   run:
     - python >=3.9
     - boto3
-    - urllib3
+    - urllib3 >=2
     - pydantic
 
 test:
