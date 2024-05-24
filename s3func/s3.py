@@ -538,7 +538,7 @@ class S3Lock:
         self._last_modified = None
 
 
-    def _put_object(self, body):
+    def _put_lock_object(self, body):
         """
 
         """
@@ -547,24 +547,28 @@ class S3Lock:
             counter += 1
             start_time = datetime.datetime.now(datetime.timezone.utc)
             resp = put_object(self._s3_client, self._bucket, self._obj_lock_key, body)
+            return_time = datetime.datetime.now(datetime.timezone.utc)
             if resp.status != 200:
                 raise urllib3.exceptions.HTTPError(str(resp.error)[1:-1])
             # header_time = datetime.datetime.strptime(resp.headers['ResponseMetadata']['HTTPHeaders']['date'], '%a, %d %b %Y %H:%M:%S %Z').replace(tzinfo=datetime.timezone.utc)
-            # to_header_time = (header_time - start_time).total_seconds()
-            mod_time = resp.metadata['last_modified']
-            to_mod_time = (mod_time - start_time).total_seconds()
+            # total_time = (header_time - start_time).total_seconds()
+            # mod_time = resp.metadata['last_modified']
+            # total_time = (mod_time - start_time).total_seconds()
+            total_time = (return_time - start_time).total_seconds()
+            # print(total_time)
 
-            if to_mod_time < 2.5:
-                diff_time = 2.5 - to_mod_time
+            self._version_id = resp.metadata['version_id']
+            self._last_modified = resp.metadata['last_modified']
+
+            if total_time <= 3:
+                diff_time = 3 - total_time
                 sleep(diff_time)
                 break
             else:
+                # print(counter)
                 self._delete_lock_object()
                 if counter == 5:
                     raise urllib3.exceptions.HTTPError('put_object takes too long to complete.')
-
-        self._version_id = resp.metadata['version_id']
-        self._last_modified = resp.metadata['last_modified']
 
 
     def other_locks(self):
@@ -605,7 +609,7 @@ class S3Lock:
 
     def locked(self):
         """
-        Checks to see if there's a lock on the object. 
+        Checks to see if there's a lock on the object.
 
         Returns
         -------
@@ -623,13 +627,13 @@ class S3Lock:
         Acquire a lock, blocking or non-blocking.
 
         When invoked with the blocking argument set to True (the default), block until the lock is unlocked, then set it to locked and return True.
-        
+
         When invoked with the blocking argument set to False, do not block. If a call with blocking set to True would block, return False immediately; otherwise, set the lock to locked and return True.
-        
+
         When invoked with the timeout argument set to a positive value, block for at most the number of seconds specified by timeout and as long as the lock cannot be acquired. A timeout argument of -1 specifies an unbounded wait. It is forbidden to specify a timeout when blocking is False.
 
         When the exclusive argument is True (the default), an exclusive lock is made. If False, then a shared lock is made. These are equivalent to the exclusive and shared locks in the linux flock command.
-        
+
         The return value is True if the lock is acquired successfully, False if not (for example if the timeout expired).
 
         Returns
@@ -641,7 +645,7 @@ class S3Lock:
                 body = b'1'
             else:
                 body = b'0'
-            self._put_object(body)
+            self._put_lock_object(body)
             objs = self.other_locks()
             objs2 = self._check_for_older_versions(objs, self._last_modified, self._version_id)
 
