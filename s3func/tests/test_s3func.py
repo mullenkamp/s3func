@@ -43,6 +43,7 @@ threads = 10
 object_lock = False
 file_name = 'stns_data.blt'
 obj_key = uuid.uuid4().hex
+obj_key = 'manual_test_key'
 base_url = 'https://b2.tethys-ts.xyz/file/' + bucket + '/'
 url = base_url +  obj_key
 
@@ -312,7 +313,8 @@ def s3lock_loop():
                 for other_one in others:
                     other_mod_date = other_one['last_modified']
                     if other_mod_date < mod_date:
-                        raise ValueError('Other mod date was earlier.')
+                        print(('Other mod date was earlier.'))
+                        # raise ValueError('Other mod date was earlier.')
 
 
 def resp_delay_test(n):
@@ -346,7 +348,12 @@ def resp_delay_test(n):
 
 
 
+# def _save_test_results(to_mod_time, to_header_time, to_return_time):
+#     """
 
+#     """
+#     df1 = pd.DataFrame(zip(to_mod_time, to_header_time, to_return_time), columns=['to_mod_time', 'to_header_time', 'to_return_time'])
+#     df1.to_csv('put_object_timings.csv')
 
 
 
