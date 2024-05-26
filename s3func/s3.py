@@ -451,7 +451,7 @@ class S3Lock:
     """
 
     """
-    def __init__(self, s3_client: botocore.client.BaseClient, bucket: str, obj_key: str, version_id: str=None):
+    def __init__(self, s3_client: botocore.client.BaseClient, bucket: str, obj_key: str, version_id: str=None, lock_delay: int | float=3):
         """
         This class contains a locking mechanism by utilizing S3 objects and associated versions. It has implementations for both shared and exclusive (the default) locks. It follows the same locking API as python thread locks (https://docs.python.org/3/library/threading.html#lock-objects), but with some extra methods for managing "deadlocks". Object versioning MUST be activated in the S3 bucket for this to work. The required S3 permissions are ListObjects, WriteObjects, and DeleteObjects.
 
@@ -467,6 +467,8 @@ class S3Lock:
             The base object key that will be given a lock. The extension ".lock" will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten.
         version_id : str
             Open a previously locked object version. This will allow the user to continue a lock from a previous instance (e.g. if that instance crashed). This will raise a KeyError if the object version doesn't exist.
+        lock_delay : int or float
+            The put_object lock delay to ensure no other process can get a lock before an earlier one finishes. All locks associated with the same object MUST use the same lock_delay! Run the lock_delay_test method to determine the appropriate delay. I've use the 95th percentile of the delays.
         """
         obj_lock_key = obj_key + '.lock'
         objs = self._list_object_versions(s3_client, bucket, obj_lock_key)
@@ -486,6 +488,7 @@ class S3Lock:
         self._bucket = bucket
         self._obj_lock_key = obj_lock_key
         self._obj_key = obj_key
+        self._lock_delay = lock_delay
 
 
     @staticmethod
@@ -529,6 +532,32 @@ class S3Lock:
         return res
 
 
+    def lock_delay_test(self, n: int=100):
+        """
+        Tests the put_object timings for a lock object. The n is the number of iterations to test. The method returns the timings for all iterations.
+        """
+        to_return_time = []
+
+        for i in range(n):
+            print(i)
+            start_time = datetime.datetime.now(datetime.timezone.utc)
+            resp = put_object(self._s3_client, self._bucket, self._obj_lock_key, b'1')
+            return_time = datetime.datetime.now(datetime.timezone.utc)
+            # header_time = datetime.datetime.strptime(resp.headers['ResponseMetadata']['HTTPHeaders']['date'], '%a, %d %b %Y %H:%M:%S %Z').replace(tzinfo=datetime.timezone.utc)
+            # mod_time = resp.metadata['last_modified']
+            _ = delete_object(self._s3_client, self._bucket, self._obj_lock_key, resp.metadata['version_id'])
+
+            # to_mod_time.append((mod_time - start_time).total_seconds())
+            # to_header_time.append((header_time - start_time).total_seconds())
+            to_return_time.append((return_time - start_time).total_seconds())
+
+        # mod_time_mean = to_mod_time/n
+        # header_time_mean = to_header_time/n
+        # return_time_mean = to_return_time/n
+
+        return to_return_time
+
+
     def _delete_lock_object(self):
         """
 
@@ -538,7 +567,7 @@ class S3Lock:
         self._last_modified = None
 
 
-    def _put_lock_object(self, body):
+    def _put_lock_object(self, body, lock_delay):
         """
 
         """
@@ -560,8 +589,8 @@ class S3Lock:
             self._version_id = resp.metadata['version_id']
             self._last_modified = resp.metadata['last_modified']
 
-            if total_time <= 3:
-                diff_time = 3 - total_time
+            if total_time <= lock_delay:
+                diff_time = lock_delay - total_time
                 sleep(diff_time)
                 break
             else:
@@ -645,7 +674,7 @@ class S3Lock:
                 body = b'1'
             else:
                 body = b'0'
-            self._put_lock_object(body)
+            self._put_lock_object(body, self._lock_delay)
             objs = self.other_locks()
             objs2 = self._check_for_older_versions(objs, self._last_modified, self._version_id)
 
