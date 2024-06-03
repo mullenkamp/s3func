@@ -11,6 +11,7 @@ import urllib.parse
 # from requests import Session
 # from requests.adapters import HTTPAdapter
 import urllib3
+import b2sdk.v2 as b2
 
 from . import http_url
 # import http_url
@@ -42,7 +43,7 @@ md5_locks = {
 ### Backblaze
 
 
-def get_authorization_b2(username, password, url_session=None, **url_session_kwargs):
+def get_authorization(username, password, url_session=None, **url_session_kwargs):
     """
 
     """
@@ -57,7 +58,7 @@ def get_authorization_b2(username, password, url_session=None, **url_session_kwa
     return resp
 
 
-def create_app_key_b2(auth_dict: dict, capabilities: List[str], key_name: str, duration: int=None, bucket_id: str=None, prefix: str=None, url_session=None, **url_session_kwargs):
+def create_app_key(auth_dict: dict, capabilities: List[str], key_name: str, duration: int=None, bucket_id: str=None, prefix: str=None, url_session=None, **url_session_kwargs):
     """
 
     """
@@ -90,7 +91,7 @@ def create_app_key_b2(auth_dict: dict, capabilities: List[str], key_name: str, d
     return resp
 
 
-def list_buckets_b2(auth_dict: dict, url_session=None, **url_session_kwargs):
+def list_buckets(auth_dict: dict, url_session=None, **url_session_kwargs):
     """
 
     """
@@ -113,10 +114,20 @@ def list_buckets_b2(auth_dict: dict, url_session=None, **url_session_kwargs):
     return resp
 
 
+def list_objects(auth_dict: dict, bucket: str, prefix: str=None, start_after: str=None, delimiter: str=None, max_keys: int=10000, url_session=None, **url_session_kwargs):
+    """
+    b2_list_file_names
+    """
+    auth_token = auth_dict['authorizationToken']
+
+    query_params = utils.build_b2_query_params(bucket=bucket, start_after=start_after, prefix=prefix, delimiter=delimiter, max_keys=max_keys)
 
 
 
+def put_object():
+    """
 
+    """
 
 
 

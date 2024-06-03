@@ -111,6 +111,52 @@ def build_url_headers(range_start: int=None, range_end: int=None):
     return params
 
 
+def build_b2_query_params(bucket: str, obj_key: str=None, start_after: str=None, prefix: str=None, delimiter: str=None, max_keys: int=None, key_marker: str=None, object_legal_hold: bool=False, range_start: int=None, range_end: int=None, metadata: dict={}, content_type: str=None, version_id: str=None):
+    """
+
+    """
+    params = {'bucketId': bucket}
+    if start_after:
+        params['startFileName'] = start_after
+    if obj_key:
+        params['key'] = obj_key
+    if prefix:
+        params['prefix'] = prefix
+    if delimiter:
+        params['delimiter'] = delimiter
+    if max_keys:
+        params['maxFileCount'] = max_keys
+    # if key_marker:
+    #     params['KeyMarker'] = key_marker
+    # if object_legal_hold: # This is for the put_object request
+    #     params['ObjectLockLegalHoldStatus'] = 'ON'
+    # if metadata:
+    #     params['Metadata'] = metadata
+    # if content_type:
+    #     params['ContentType'] = content_type
+    # if version_id:
+    #     params['VersionId'] = version_id
+
+    # Range
+    # if (range_start is not None) or (range_end is not None):
+    #     range_dict = {}
+    #     if range_start is not None:
+    #         range_dict['start'] = str(range_start)
+    #     else:
+    #         range_dict['start'] = ''
+
+    #     if range_end is not None:
+    #         range_dict['end'] = str(range_end)
+    #     else:
+    #         range_dict['end'] = ''
+
+    #     range1 = 'bytes={start}-{end}'.format(**range_dict)
+
+    #     params['range'] = range1
+
+    return params
+
+
 def chunks(lst, n_items):
     """
     Yield successive n-sized chunks from list.
@@ -148,9 +194,9 @@ def add_metadata_from_urllib3(response):
             metadata['content_length'] = int(headers['Content-Length'])
         elif key == 'x-bz-file-id':
             metadata['version_id'] = headers['x-bz-file-id']
-            metadata['last_modified'] = datetime.datetime.fromtimestamp(int(headers['x-bz-file-id'].split('_u')[1]) * 0.001, datetime.timezone.utc)
+            metadata['upload_timestamp'] = datetime.datetime.fromtimestamp(int(headers['x-bz-file-id'].split('_u')[1]) * 0.001, datetime.timezone.utc)
         elif key == 'X-Bz-Upload-Timestamp':
-            metadata['last_modified'] = datetime.datetime.fromtimestamp(int(headers['X-Bz-Upload-Timestamp']) * 0.001, datetime.timezone.utc)
+            metadata['upload_timestamp'] = datetime.datetime.fromtimestamp(int(headers['X-Bz-Upload-Timestamp']) * 0.001, datetime.timezone.utc)
         elif 'x-bz-info-' in key:
             new_key = key.split('x-bz-info-')[1]
             metadata[new_key] = value
@@ -172,7 +218,7 @@ def add_metadata_from_s3(response):
         metadata['etag'] = response['ETag'].strip('"')
     if 'VersionId' in response:
         metadata['version_id'] = response['VersionId']
-        metadata['last_modified'] = datetime.datetime.fromtimestamp(int(metadata['version_id'].split('_u')[1]) * 0.001, datetime.timezone.utc)
+        metadata['upload_timestamp'] = datetime.datetime.fromtimestamp(int(metadata['version_id'].split('_u')[1]) * 0.001, datetime.timezone.utc)
     if 'ContentLength' in response:
         metadata['content_length'] = response['ContentLength']
     if 'HTTPStatusCode' in response['ResponseMetadata']:
@@ -285,7 +331,7 @@ class S3ListResponse:
                             'key': js['Key'],
                             'version_id': js['VersionId'],
                             'is_latest': js['IsLatest'],
-                            'last_modified': js['LastModified'],
+                            'upload_timestamp': js['LastModified'],
                             'owner': js['Owner']['ID'],
                             })
                     if 'DeleteMarkers' in resp:
@@ -294,7 +340,7 @@ class S3ListResponse:
                                 'key': js['Key'],
                                 'version_id': js['VersionId'],
                                 'is_latest': js['IsLatest'],
-                                'last_modified': js['LastModified'],
+                                'upload_timestamp': js['LastModified'],
                                 'owner': js['Owner']['ID'],
                                 })
                     if 'NextKeyMarker' in resp:
@@ -308,7 +354,7 @@ class S3ListResponse:
                             'etag': js['ETag'].strip('"'),
                             'size': js['Size'],
                             'key': js['Key'],
-                            'last_modified': js['LastModified'],
+                            'upload_timestamp': js['LastModified'],
                             })
                     if 'NextContinuationToken' in resp:
                         kwargs['ContinuationToken'] = resp['NextContinuationToken']
