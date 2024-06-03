@@ -19,9 +19,9 @@ from s3func import s3, b2, http_url, utils
 script_path = pathlib.Path(os.path.realpath(os.path.dirname(__file__)))
 package_path = str(script_path.parent)
 
-if package_path not in sys.path:
-    sys.path.insert(0, package_path)
-import s3, http_url # For running without a package
+# if package_path not in sys.path:
+#     sys.path.insert(0, package_path)
+# import s3, http_url # For running without a package
 
 try:
     with open(script_path.joinpath('s3_config.toml'), "rb") as f:
@@ -277,7 +277,7 @@ def test_S3Lock():
 
     other_locks = s3lock.other_locks()
 
-    assert isinstance(other_locks, list)
+    assert isinstance(other_locks, dict)
 
     if other_locks:
         _ = s3lock.break_other_locks()

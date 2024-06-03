@@ -28,8 +28,8 @@ import datetime
 # from . import http_url
 # import http_url
 
-# from . import utils
-import utils
+from . import utils
+# import utils
 
 #######################################################
 ### Parameters
@@ -606,7 +606,7 @@ class S3Lock:
 
         Returns
         -------
-        list of dict
+        dict
         """
         objs = self._list_objects(self._s3_client, self._bucket, self._obj_lock_key)
 
