@@ -112,4 +112,5 @@ ENV/
 
 # S3 config file for tests
 s3func/tests/s3_config.toml
+s3func/tests/auth_file.sqlite
 
