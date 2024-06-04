@@ -11,6 +11,7 @@ import urllib.parse
 # from requests import Session
 # from requests.adapters import HTTPAdapter
 import urllib3
+import orjson
 # import b2sdk.v2 as b2
 # from b2sdk._internal.session import B2Session
 
@@ -43,13 +44,13 @@ md5_locks = {
 #########################################################
 ### Backblaze
 
-info = b2.InMemoryAccountInfo()
+# info = b2.InMemoryAccountInfo()
 
-b2_api = b2.B2Api(info)
+# b2_api = b2.B2Api(info)
 
-session = B2Session(info)
+# session = B2Session(info)
 
-sqlite_info = b2.SqliteAccountInfo()
+# sqlite_info = b2.SqliteAccountInfo()
 
 
 
@@ -75,6 +76,10 @@ def get_authorization(username, password, url_session=None, **url_session_kwargs
 
     response = url_session.request('get', b2_auth_url, headers=headers)
     resp = utils.HttpResponse(response)
+    if resp.status != 200:
+        raise urllib3.exceptions.HTTPError(f'{resp.error}')
+
+    auth_dict = orjson.loads(resp.stream.data)
 
     return resp
 

@@ -45,8 +45,8 @@ read_timeout = 60
 threads = 10
 object_lock = False
 file_name = 'stns_data.blt'
-obj_key = uuid.uuid4().hex
-# obj_key = 'manual_test_key'
+# obj_key = uuid.uuid4().hex
+obj_key = 'manual_test_key'
 base_url = 'https://b2.tethys-ts.xyz/file/' + bucket + '/'
 url = base_url +  obj_key
 
@@ -60,7 +60,10 @@ http_session = HttpSession()
 
 # info = b2.InMemoryAccountInfo()
 
-# b2_api = b2.B2Api(info)
+# b2_api = b2.B2Api(info, cache=b2.InMemoryCache())
+# # Auth here
+# bucket = b2_api.get_bucket_by_id('e063bcbc0d6523df74ed0e1d')
+
 
 # session = B2Session(info)
 
