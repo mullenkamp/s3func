@@ -10,8 +10,10 @@ try:
     import tomllib as toml
 except ImportError:
     import tomli as toml
-from s3func import s3, b2, http_url, utils
+from s3func import s3, http_url, utils, S3Session, HttpSession
 
+# import b2sdk.v2 as b2
+# from b2sdk._internal.session import B2Session
 
 #################################################
 ### Parameters
@@ -21,7 +23,7 @@ package_path = str(script_path.parent)
 
 # if package_path not in sys.path:
 #     sys.path.insert(0, package_path)
-# import s3, http_url # For running without a package
+# import s3, http_url, S3Session, HttpSession # For running without a package
 
 try:
     with open(script_path.joinpath('s3_config.toml'), "rb") as f:
@@ -36,6 +38,7 @@ except:
 
 
 bucket = 'achelous'
+bucket_id = 'e063bcbc0d6523df74ed0e1d'
 flag = "w"
 buffer_size = 524288
 read_timeout = 60
@@ -47,7 +50,36 @@ obj_key = uuid.uuid4().hex
 base_url = 'https://b2.tethys-ts.xyz/file/' + bucket + '/'
 url = base_url +  obj_key
 
-s3_client = s3.client(conn_config)
+# s3_client = s3.client(conn_config)
+s3_session = S3Session(conn_config, bucket)
+http_session = HttpSession()
+
+## B2
+# auth_file_path = script_path.joinpath('auth_file.sqlite')
+
+
+# info = b2.InMemoryAccountInfo()
+
+# b2_api = b2.B2Api(info)
+
+# session = B2Session(info)
+
+# sqlite_info = b2.SqliteAccountInfo(auth_file_path)
+
+# b2_api = b2.B2Api(sqlite_info)
+
+# session = B2Session(sqlite_info)
+
+# conn = sqlite_info._get_connection()
+# cur = conn.cursor()
+# res = cur.execute("SELECT download_url FROM account")
+# res.fetchone()
+# res = cur.execute("UPDATE account SET download_url='https://b2.tethys-ts.xyz'")
+# conn.commit()
+
+
+
+
 
 
 ################################################
@@ -75,12 +107,12 @@ def get_logs(request):
         print("executing test failed")
 
         obj_keys = []
-        for js in s3.list_object_versions(s3_client, bucket):
+        for js in s3_session.list_object_versions():
             if js['Key'] == obj_key:
                 obj_keys.append({'Key': js['Key'], 'VersionId': js['VersionId']})
 
         if obj_keys:
-            s3.delete_objects(s3_client, bucket, obj_keys)
+            s3_session.delete_objects(obj_keys)
 
     # elif request.node.rep_call.passed:
     #     # Add code here to cleanup success scenario
@@ -111,7 +143,7 @@ def test_s3_put_object():
     with io.open(script_path.joinpath(file_name), 'rb') as f:
         obj = f.read()
 
-    resp1 = s3.put_object(s3_client, bucket, obj_key, obj)
+    resp1 = s3_session.put_object(obj_key, obj)
 
     meta = resp1.metadata
     if meta['status'] != 200:
@@ -120,7 +152,7 @@ def test_s3_put_object():
     resp1_etag = meta['etag']
 
     ## Upload with a file-obj
-    resp2 = s3.put_object(s3_client, bucket, obj_key, io.open(script_path.joinpath(file_name), 'rb'))
+    resp2 = s3_session.put_object(obj_key, io.open(script_path.joinpath(file_name), 'rb'))
 
     meta = resp2.metadata
     if meta['status'] != 200:
@@ -137,7 +169,7 @@ def test_s3_list_objects():
     """
     count = 0
     found_key = False
-    resp = s3.list_objects(s3_client, bucket)
+    resp = s3_session.list_objects()
     for i, js in enumerate(resp.metadata['contents']):
         count += 1
         if js['key'] == obj_key:
@@ -152,7 +184,7 @@ def test_s3_list_object_versions():
     """
     count = 0
     found_key = False
-    resp = s3.list_object_versions(s3_client, bucket)
+    resp = s3_session.list_object_versions()
     for i, js in enumerate(resp.metadata['versions']):
         count += 1
         if js['key'] == obj_key:
@@ -165,25 +197,25 @@ def test_s3_get_object():
     """
 
     """
-    stream1 = s3.get_object(obj_key, bucket, s3_client)
+    stream1 = s3_session.get_object(obj_key)
     data1 = stream1.stream.read()
 
-    stream2 = s3.get_object(obj_key, bucket, connection_config=conn_config)
-    data2 = stream2.stream.read()
+    # stream2 = s3_session.get_object(obj_key)
+    # data2 = stream2.stream.read()
 
-    assert data1 == data2
+    assert len(data1) > 10000
 
 
 def test_http_url_get_object():
     """
 
     """
-    stream1 = http_url.get_object(url)
+    stream1 = http_session.get_object(url)
     data1 = stream1.stream.read()
 
     new_url = http_url.join_url_obj_key(obj_key, base_url)
 
-    stream2 = http_url.get_object(new_url)
+    stream2 = http_session.get_object(new_url)
     data2 = stream2.stream.read()
 
     assert data1 == data2
@@ -193,7 +225,7 @@ def test_s3_head_object():
     """
 
     """
-    response = s3.head_object(obj_key, bucket, s3_client)
+    response = s3_session.head_object(obj_key)
 
     assert 'version_id' in response.metadata
 
@@ -202,7 +234,7 @@ def test_http_url_head_object():
     """
 
     """
-    response = http_url.head_object(url)
+    response = http_session.head_object(url)
 
     assert 'version_id' in response.metadata
 
@@ -211,37 +243,37 @@ def test_legal_hold():
     """
 
     """
-    hold = s3.get_object_legal_hold(s3_client, bucket, obj_key)
+    hold = s3_session.get_object_legal_hold(obj_key)
     if hold.status != 404:
         raise ValueError("There's a hold, but there shouldn't be.")
 
-    put_hold = s3.put_object_legal_hold(s3_client, bucket, obj_key, True)
+    put_hold = s3_session.put_object_legal_hold(obj_key, True)
     if put_hold.status != 200:
         raise ValueError("Creating a hold failed.")
 
-    hold = s3.get_object_legal_hold(s3_client, bucket, obj_key)
+    hold = s3_session.get_object_legal_hold(obj_key)
     if not hold.metadata['legal_hold']:
         raise ValueError("There isn't a hold, but there should be.")
 
-    put_hold = s3.put_object_legal_hold(s3_client, bucket, obj_key, False)
+    put_hold = s3_session.put_object_legal_hold(obj_key, False)
     if put_hold.status != 200:
         raise ValueError("Removing a hold failed.")
 
-    hold = s3.get_object_legal_hold(s3_client, bucket, obj_key)
+    hold = s3_session.get_object_legal_hold(obj_key)
     if hold.metadata['legal_hold']:
         raise ValueError("There's a hold, but there shouldn't be.")
 
-    _ = s3.put_object(s3_client, bucket, obj_key, open(script_path.joinpath(file_name), 'rb'), object_legal_hold=True)
+    _ = s3_session.put_object(obj_key, open(script_path.joinpath(file_name), 'rb'), object_legal_hold=True)
 
-    hold = s3.get_object_legal_hold(s3_client, bucket, obj_key)
+    hold = s3_session.get_object_legal_hold(obj_key)
     if not hold.metadata['legal_hold']:
         raise ValueError("There isn't a hold, but there should be.")
 
-    put_hold = s3.put_object_legal_hold(s3_client, bucket, obj_key, False)
+    put_hold = s3_session.put_object_legal_hold(obj_key, False)
     if put_hold.status != 200:
         raise ValueError("Removing a hold failed.")
 
-    hold = s3.get_object_legal_hold(s3_client, bucket, obj_key)
+    hold = s3_session.get_object_legal_hold(obj_key)
     if hold.metadata['legal_hold']:
         raise ValueError("There's a hold, but there shouldn't be.")
 
@@ -253,15 +285,15 @@ def test_delete_objects():
 
     """
     obj_keys = []
-    resp = s3.list_object_versions(s3_client, bucket)
+    resp = s3_session.list_object_versions()
     for js in resp.metadata['versions']:
         if js['key'] == obj_key:
             obj_keys.append({'key': js['key'], 'version_id': js['version_id']})
 
-    s3.delete_objects(s3_client, bucket, obj_keys)
+    s3_session.delete_objects(obj_keys)
 
     found_key = False
-    resp = s3.list_object_versions(s3_client, bucket)
+    resp = s3_session.list_object_versions()
     for i, js in enumerate(resp.metadata['versions']):
         if js['key'] == obj_key:
             found_key = True
@@ -273,7 +305,7 @@ def test_S3Lock():
     """
 
     """
-    s3lock = s3.S3Lock(s3_client, bucket, obj_key)
+    s3lock = s3_session.s3lock(obj_key)
 
     other_locks = s3lock.other_locks()
 
@@ -302,7 +334,7 @@ def s3lock_loop():
     """
 
     """
-    s3lock = s3.S3Lock(s3_client, bucket, obj_key)
+    s3lock = s3_session.s3lock(obj_key)
 
     for i in range(100):
         print(i)

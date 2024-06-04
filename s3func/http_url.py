@@ -23,34 +23,7 @@ from . import utils
 
 
 ##################################################
-### url session
-
-
-# def url_session(max_pool_connections: int = 30, max_attempts: int=3, read_timeout: int=120):
-#     """
-#     Function to setup a requests url session for url downloads
-
-#     Parameters
-#     ----------
-#     max_pool_connections : int
-#         The number of simultaneous connections for the S3 connection.
-#     max_attempts: int
-#         The number of retries if the connection fails.
-#     read_timeout: int
-#         The read timeout in seconds.
-
-#     Returns
-#     -------
-#     Session object
-#     """
-#     s = Session()
-#     retries1 = Retry(
-#         total=max_attempts,
-#         backoff_factor=1,
-#     )
-#     s.mount('https://', TimeoutHTTPAdapter(timeout=read_timeout, max_retries=retries1, pool_connections=max_pool_connections, pool_maxsize=max_pool_connections))
-
-#     return s
+### Functions
 
 
 def session(max_pool_connections: int = 10, max_attempts: int=3, read_timeout: int=120):
@@ -80,11 +53,6 @@ def session(max_pool_connections: int = 10, max_attempts: int=3, read_timeout: i
     return http
 
 
-
-#######################################################
-### Main functions
-
-
 def join_url_obj_key(obj_key: str, base_url: HttpUrl):
     """
 
@@ -96,72 +64,77 @@ def join_url_obj_key(obj_key: str, base_url: HttpUrl):
     return url
 
 
-# def url_to_stream(url: HttpUrl, session: requests.sessions.Session=None, range_start: int=None, range_end: int=None, chunk_size: int=524288, **url_session_kwargs):
-#     """
-#     requests version
-#     """
-#     if session is None:
-#         session = url_session(**url_session_kwargs)
-
-#     headers = build_url_headers(range_start=range_start, range_end=range_end)
-
-#     response = session.get(url, headers=headers, stream=True)
-#     stream = ResponseStream(response.iter_content(chunk_size))
-
-#     return stream
+#######################################################
+### Main class
 
 
-def get_object(url: HttpUrl, url_session: urllib3.poolmanager.PoolManager=None, range_start: int=None, range_end: int=None, chunk_size: int=524288, **url_session_kwargs):
+class HttpSession:
     """
 
     """
-    if url_session is None:
-        url_session = session(**url_session_kwargs)
+    def __init__(self, max_pool_connections: int = 10, max_attempts: int=3, read_timeout: int=120):
+        """
+        Class using a urllib3 pool manager for url requests.
 
-    headers = utils.build_url_headers(range_start=range_start, range_end=range_end)
+        Parameters
+        ----------
+        max_pool_connections : int
+            The number of simultaneous connections for the S3 connection.
+        max_attempts: int
+            The number of retries if the connection fails.
+        read_timeout: int
+            The read timeout in seconds.
 
-    response = url_session.request('get', url, headers=headers, preload_content=False)
-    resp = utils.HttpResponse(response)
+        """
+        http_session = session(max_pool_connections, max_attempts, read_timeout)
 
-    return resp
-
-
-# def base_url_to_stream(obj_key: str, base_url: HttpUrl, url_session: urllib3.poolmanager.PoolManager=None, range_start: int=None, range_end: int=None, chunk_size: int=524288, **url_session_kwargs):
-#     """
-
-#     """
-#     if not base_url.endswith('/'):
-#         base_url += '/'
-#     url = urllib.parse.urljoin(base_url, obj_key)
-#     response = url_to_stream(url, url_session, range_start, range_end, chunk_size, **url_session_kwargs)
-
-#     return response
+        self._session = http_session
 
 
-def head_object(url: HttpUrl, url_session: urllib3.poolmanager.PoolManager=None, **url_session_kwargs):
-    """
+    def get_object(self, url: HttpUrl, range_start: int=None, range_end: int=None, chunk_size: int=524288):
+        """
+        Use a GET request to download the body and headers of a url.
 
-    """
-    if url_session is None:
-        url_session = session(**url_session_kwargs)
+        Parameters
+        ----------
+        url : HttpUrl
+            The URL to do the GET request on.
+        range_start: int
+            The byte range start for the file.
+        range_end: int
+            The byte range end for the file.
+        chunk_size: int
+            The amount of bytes to download as once.
 
-    response = url_session.request('head', url)
-    resp = utils.HttpResponse(response)
+        Returns
+        -------
+        HttpResponse
+        """
+        headers = utils.build_url_headers(range_start=range_start, range_end=range_end)
 
-    return resp
+        response = self._session.request('get', url, headers=headers, preload_content=False)
+        resp = utils.HttpResponse(response)
+
+        return resp
 
 
-# def base_url_to_headers(obj_key: str, base_url: HttpUrl, session: urllib3.poolmanager.PoolManager=None, **url_session_kwargs):
-#     """
+    def head_object(self, url: HttpUrl):
+        """
+        Use a HEAD request to download the headers of a url.
 
-#     """
-#     if not base_url.endswith('/'):
-#         base_url += '/'
-#     url = urllib.parse.urljoin(base_url, obj_key)
-#     response = url_to_headers(url, session, **url_session_kwargs)
+        Parameters
+        ----------
+        url : HttpUrl
+            The URL to do the HEAD request on.
 
-#     return response
+        Returns
+        -------
+        HttpResponse
+        """
+        response = self._session.request('head', url)
+        resp = utils.HttpResponse(response)
 
+        return resp
 
 
 

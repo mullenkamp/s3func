@@ -11,12 +11,13 @@ import urllib.parse
 # from requests import Session
 # from requests.adapters import HTTPAdapter
 import urllib3
-import b2sdk.v2 as b2
+# import b2sdk.v2 as b2
+# from b2sdk._internal.session import B2Session
 
-from . import http_url
+# from . import http_url
 # import http_url
 
-from . import utils
+# from . import utils
 # import utils
 
 #######################################################
@@ -41,6 +42,26 @@ md5_locks = {
 
 #########################################################
 ### Backblaze
+
+info = b2.InMemoryAccountInfo()
+
+b2_api = b2.B2Api(info)
+
+session = B2Session(info)
+
+sqlite_info = b2.SqliteAccountInfo()
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 def get_authorization(username, password, url_session=None, **url_session_kwargs):
