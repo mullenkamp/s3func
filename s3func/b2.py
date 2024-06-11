@@ -24,11 +24,11 @@ from threading import current_thread
 # import b2sdk.v2 as b2
 # from b2sdk._internal.session import B2Session
 
-# from . import http_url
-import http_url
+from . import http_url
+# import http_url
 
-# from . import utils
-import utils
+from . import utils
+# import utils
 
 #######################################################
 ### Parameters
@@ -157,11 +157,11 @@ class B2Lock:
 
         meta = objs.metadata
         res = []
-        if 'versions' in meta:
-            for l in meta['versions']:
-                if l['etag'] == md5_locks['exclusive']:
+        if 'objects' in meta:
+            for l in meta['objects']:
+                if l['content_md5'] == md5_locks['exclusive']:
                     l['lock_type'] = 'exclusive'
-                elif l['etag'] == md5_locks['shared']:
+                elif l['content_md5'] == md5_locks['shared']:
                     l['lock_type'] = 'shared'
                 else:
                     raise ValueError('This lock file was created by something else...')
@@ -216,10 +216,8 @@ class B2Lock:
         """
 
         """
-        del_dict = [{'Key': self._obj_lock_key + f'{self._lock_id}-{seq}', 'VersionId': self._version_ids[seq]} for seq in (0, 1)]
-        _ = self._b2_session.delete_objects( del_dict)
-        self._version_ids = {0: '', 1: ''}
-        self._timestamp = None
+        for seq in (0, 1):
+            self._delete_lock_object(seq)
 
 
     def _put_lock_objects(self, body):
@@ -228,10 +226,11 @@ class B2Lock:
         """
         for seq in (0, 1):
             obj_name = self._obj_lock_key + f'{self._lock_id}-{seq}'
-            resp = self._b2_session.put_object(obj_name, body)
+            timestamp = datetime.datetime.now(datetime.timezone.utc)
+            resp = self._b2_session.put_object(obj_name, body, last_modified=timestamp)
             if ('version_id' in resp.metadata) and (resp.status == 200):
                 self._version_ids[seq] = resp.metadata['version_id']
-                self._timestamp = resp.metadata['upload_timestamp']
+                self._timestamp = timestamp
             else:
                 if seq == 1:
                     self._delete_lock_objects()
@@ -257,9 +256,9 @@ class B2Lock:
                 obj_id, seq = l['key'][self._obj_lock_key_len:].split('-')
                 if obj_id != self._lock_id:
                     if obj_id in other_locks:
-                        other_locks[obj_id].update({int(seq): l['upload_timestamp']})
+                        other_locks[obj_id].update({int(seq): l['last_modified']})
                     else:
-                        other_locks[obj_id] = {int(seq): l['upload_timestamp'],
+                        other_locks[obj_id] = {int(seq): l['last_modified'],
                                                'lock_type': l['lock_type'],
                                                }
         return other_locks
@@ -280,7 +279,7 @@ class B2Lock:
         if objs:
             for l in objs:
                 obj_id, seq = l['key'][self._obj_lock_key_len:].split('-')
-                other_locks[obj_id] = {'upload_timestamp': l['upload_timestamp'],
+                other_locks[obj_id] = {'last_modified': l['last_modified'],
                                        'lock_type': l['lock_type'],
                                        'owner': l['owner'],
                                        }
@@ -308,10 +307,9 @@ class B2Lock:
         keys = []
         if objs:
             for l in objs:
-                if l['upload_timestamp'] < timestamp:
-                    keys.append({'Key': l['key'], 'VersionId': l['version_id']})
-
-            self._b2_session.delete_objects(keys)
+                if l['last_modified'] < timestamp:
+                    _ = self._b2_session.delete_object(l['key'], l['version_id'])
+                    keys.append(l)
 
         return keys
 
@@ -427,13 +425,13 @@ class B2Session:
 
         if isinstance(connection_config, dict):
             conn_config = utils.build_conn_config(connection_config, 'b2')
-    
+
             resp = get_authorization(conn_config['application_key_id'], conn_config['application_key'], b2_session)
             if resp.status // 100 != 2:
                 raise urllib3.exceptions.HTTPError(f'{resp.error}')
-    
+
             data = orjson.loads(resp.stream.data)
-    
+
             storage_api = data['apiInfo']['storageApi']
             if 'bucketId' in storage_api:
                 bucket_id = storage_api['bucketId']
@@ -463,6 +461,41 @@ class B2Session:
         self.download_url = download_url
         self._upload_url_data = {}
         # self._upload_auth_token = None
+
+
+    def create_app_key(self, capabilities: List[str], key_name: str, duration: int=None, bucket_id: str=None, prefix: str=None):
+        """
+
+        """
+        if hasattr(self, 'auth_token'):
+            headers = {'Authorization': self.auth_token}
+        else:
+            raise ValueError('connection_config must be initialised.')
+
+        for cap in capabilities:
+            if cap not in available_capabilities:
+                raise ValueError(f'{cap} is not in {available_capabilities}.')
+
+        fields = {
+            'accountId': self.account_id,
+            'capabilities': capabilities,
+            'keyName': key_name}
+
+        if isinstance(duration, int):
+            fields['validDurationInSeconds'] = duration
+
+        if isinstance(bucket_id, str):
+            fields['bucketId'] = bucket_id
+
+        if isinstance(prefix, str):
+            fields['namePrefix'] = prefix
+
+        url = urllib.parse.urljoin(self.api_url, '/b2api/v3/b2_create_key')
+
+        resp = self._session.request('post', url, json=fields, headers=headers)
+        b2resp = utils.B2Response(resp)
+
+        return b2resp
 
 
     def list_buckets(self):
@@ -626,7 +659,7 @@ class B2Session:
 
             # else:
             #     raise TypeError('obj must be seekable.')
-            
+
             headers['X-Bz-Content-Sha1'] = 'do_not_verify'
 
         if isinstance(content_type, str):
@@ -662,6 +695,7 @@ class B2Session:
             upload_url = upload_url_data['upload_url']
 
         b2resp = utils.B2Response(resp)
+        b2resp.metadata.update(utils.get_metadata_from_b2_put_object(resp))
 
         return b2resp
 
@@ -888,72 +922,6 @@ class B2Session:
         """
         return B2Lock(self, key)
 
-
-    def create_app_key(self, capabilities: List[str], key_name: str, duration: int=None, bucket_id: str=None, prefix: str=None):
-        """
-    
-        """
-        if hasattr(self, 'auth_token'):
-            headers = {'Authorization': self.auth_token}
-        else:
-            raise ValueError('connection_config must be initialised.')
-
-        for cap in capabilities:
-            if cap not in available_capabilities:
-                raise ValueError(f'{cap} is not in {available_capabilities}.')
-
-        fields = {
-            'accountId': self.account_id,
-            'capabilities': capabilities,
-            'keyName': key_name}
-    
-        if isinstance(duration, int):
-            fields['validDurationInSeconds'] = duration
-    
-        if isinstance(bucket_id, str):
-            fields['bucketId'] = bucket_id
-    
-        if isinstance(prefix, str):
-            fields['namePrefix'] = prefix
-    
-        url = urllib.parse.urljoin(self.api_url, '/b2api/v3/b2_create_key')
-
-        resp = self._session.request('post', url, json=fields, headers=headers)
-        b2resp = utils.B2Response(resp)
-    
-        return b2resp
-
-
-# def list_buckets(auth_dict: dict, url_session=None, **url_session_kwargs):
-#     """
-
-#     """
-#     account_id = auth_dict['accountId']
-#     api_url = auth_dict['apiInfo']['storageApi']['apiUrl']
-#     auth_token = auth_dict['authorizationToken']
-
-#     fields = {
-#         'accountId': account_id,
-#         }
-
-#     url = urllib.parse.urljoin(api_url, '/b2api/v3/b2_list_buckets')
-
-#     if url_session is None:
-#         url_session = http_url.session(**url_session_kwargs)
-
-#     response = url_session.request('post', url, json=fields, headers={'Authorization': auth_token})
-#     resp = utils.HttpResponse(response)
-
-#     return resp
-
-
-def list_objects(auth_dict: dict, bucket: str, prefix: str=None, start_after: str=None, delimiter: str=None, max_keys: int=10000, url_session=None, **url_session_kwargs):
-    """
-    b2_list_file_names
-    """
-    auth_token = auth_dict['authorizationToken']
-
-    query_params = utils.build_b2_query_params(bucket=bucket, start_after=start_after, prefix=prefix, delimiter=delimiter, max_keys=max_keys)
 
 
 

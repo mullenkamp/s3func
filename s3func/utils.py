@@ -25,6 +25,22 @@ import datetime
 #     'contabo': '{base_url}:{bucket}/{obj_key}',
 #     }
 
+b2_field_mappings = {
+    'accountId': 'owner',
+    'action': 'action',
+    'bucketId': 'bucket_id',
+    'contentLength': 'size',
+    'contentMd5': 'content_md5',
+    'contentSha1': 'content_sha1',
+    'contentType': 'content_type',
+    'fileId': 'version_id',
+    'fileName': 'key',
+    'fileRetention': 'object_retention',
+    'legalHold': 'legal_hold',
+    'uploadTimestamp': 'upload_timestamp'
+    }
+
+
 
 ##################################################
 ### pydantic classes
@@ -114,15 +130,15 @@ def build_conn_config(connection_config, service_name):
     return conn_config
 
 
-def build_s3_params(bucket: str, obj_key: str=None, start_after: str=None, prefix: str=None, delimiter: str=None, max_keys: int=None, key_marker: str=None, object_legal_hold: bool=False, range_start: int=None, range_end: int=None, metadata: dict={}, content_type: str=None, version_id: str=None):
+def build_s3_params(bucket: str, key: str=None, start_after: str=None, prefix: str=None, delimiter: str=None, max_keys: int=None, key_marker: str=None, object_legal_hold: bool=False, range_start: int=None, range_end: int=None, metadata: dict={}, content_type: str=None, version_id: str=None):
     """
 
     """
     params = {'Bucket': bucket}
     if start_after:
         params['StartAfter'] = start_after
-    if obj_key:
-        params['Key'] = obj_key
+    if key:
+        params['Key'] = key
     if prefix:
         params['Prefix'] = prefix
     if delimiter:
@@ -186,7 +202,7 @@ def build_url_headers(range_start: int=None, range_end: int=None):
     return params
 
 
-def build_b2_query_params(bucket: str=None, obj_key: str=None, start_after: str=None, prefix: str=None, delimiter: str=None, max_keys: int=None, key_marker: str=None, object_legal_hold: bool=False, range_start: int=None, range_end: int=None, metadata: dict={}, content_type: str=None, version_id: str=None):
+def build_b2_query_params(bucket: str=None, key: str=None, start_after: str=None, prefix: str=None, delimiter: str=None, max_keys: int=None, key_marker: str=None, object_legal_hold: bool=False, range_start: int=None, range_end: int=None, metadata: dict={}, content_type: str=None, version_id: str=None):
     """
 
     """
@@ -195,8 +211,8 @@ def build_b2_query_params(bucket: str=None, obj_key: str=None, start_after: str=
         params['bucketId'] = bucket
     if start_after:
         params['startFileName'] = start_after
-    if obj_key:
-        params['fileName'] = obj_key
+    if key:
+        params['fileName'] = key
     if prefix:
         params['prefix'] = prefix
     if delimiter:
@@ -314,6 +330,25 @@ def add_metadata_from_s3(response):
 
     return metadata
 
+
+def get_metadata_from_b2_put_object(response):
+    """
+    Function to create metadata from the b2 put_object response body.
+    """
+    data = orjson.loads(response.data)
+
+    meta = {}
+    for key, val in data.items():
+        if key in b2_field_mappings:
+            if key == 'content_sha1':
+                if 'unverified:' in val:
+                    val = val.split('unverified:')[1]
+            meta[b2_field_mappings[key]] = val
+
+    if 'upload_timestamp' in meta:
+        meta['upload_timestamp'] = datetime.datetime.fromtimestamp(meta['upload_timestamp'] * 0.001, datetime.timezone.utc)
+
+    return meta
 
 
 
@@ -590,6 +625,8 @@ class B2ListResponse:
 
             if 'files' in data:
                 for js in data['files']:
+                    if 'unverified:' in js['contentSha1']:
+                        js['contentSha1'] = js['contentSha1'].split('unverified:')[1]
                     dict1 = {
                         'action': js['action'],
                         'size': js['contentLength'],
@@ -598,13 +635,13 @@ class B2ListResponse:
                         'content_type': js['contentType'],
                         'key': js['fileName'],
                         'version_id': js['fileId'],
-                        'upload_timestamp': datetime.datetime.fromtimestamp(js['uploadTimestamp']*0.001),
+                        'upload_timestamp': datetime.datetime.fromtimestamp(js['uploadTimestamp']*0.001, datetime.timezone.utc),
                         'owner': js['accountId'],
                         }
                     if 'fileInfo' in js:
                         for fi, val in js['fileInfo'].items():
                             if fi == 'src_last_modified_millis':
-                                dict1['last_modified'] = datetime.datetime.fromtimestamp(int(val)*0.001)
+                                dict1['last_modified'] = datetime.datetime.fromtimestamp(int(val)*0.001, datetime.timezone.utc)
                             else:
                                 dict1[fi] = val
                     objects.append(dict1)

@@ -130,8 +130,8 @@ class S3Lock:
 
         meta = objs.metadata
         res = []
-        if 'versions' in meta:
-            for l in meta['versions']:
+        if 'objects' in meta:
+            for l in meta['objects']:
                 if l['etag'] == md5_locks['exclusive']:
                     l['lock_type'] = 'exclusive'
                 elif l['etag'] == md5_locks['shared']:
