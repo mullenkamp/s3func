@@ -561,7 +561,7 @@ class HttpResponse:
         metadata = add_metadata_from_urllib3(response)
 
         if (response.status // 100) != 2:
-            error = response.json()
+            error = orjson.loads(response.data)
         else:
             stream = response
 
@@ -591,7 +591,7 @@ class B2Response:
         metadata = add_metadata_from_urllib3(response)
 
         if (response.status // 100) != 2:
-            error = response.json()
+            error = orjson.loads(response.data)
         else:
             stream = response
 
@@ -661,7 +661,7 @@ class B2ListResponse:
             metadata['objects'] = objects
 
         if (resp.status // 100) != 2:
-            error = resp.json()
+            error = orjson.loads(resp.data)
 
         self.headers = dict(resp.headers)
         self.metadata = metadata
