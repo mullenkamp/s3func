@@ -5,12 +5,14 @@ import io
 import sys
 from time import sleep
 from timeit import default_timer
+from threading import current_thread
+import concurrent.futures
 import datetime
 try:
     import tomllib as toml
 except ImportError:
     import tomli as toml
-from s3func import s3, http_url, utils, S3Session, HttpSession
+from s3func import s3, http_url, b2
 
 # import b2sdk.v2 as b2
 # from b2sdk._internal.session import B2Session
@@ -23,7 +25,7 @@ package_path = str(script_path.parent)
 
 # if package_path not in sys.path:
 #     sys.path.insert(0, package_path)
-# import s3, http_url, S3Session, HttpSession # For running without a package
+# import s3, http_url, b2 # For running without a package
 
 try:
     with open(script_path.joinpath('s3_config.toml'), "rb") as f:
@@ -36,6 +38,9 @@ except:
         'aws_secret_access_key': os.environ['aws_secret_access_key'],
         }
 
+# b2_conn_config = {'application_key_id': s3_conn_config['aws_access_key_id'],
+#                   'application_key': s3_conn_config['aws_secret_access_key']
+#                   }
 
 bucket = 'achelous'
 bucket_id = 'e063bcbc0d6523df74ed0e1d'
@@ -46,13 +51,16 @@ threads = 10
 object_lock = False
 file_name = 'stns_data.blt'
 obj_key = uuid.uuid4().hex
+# obj_key = 'gwrc_flow_sensor_sites.gpkg'
 # obj_key = 'manual_test_key'
 base_url = 'https://b2.tethys-ts.xyz/file/' + bucket + '/'
 url = base_url +  obj_key
+version_id = '4_ze063bcbc0d6523df74ed0e1d_f101bf5d3b78267d4_d20240208_m090229_c002_v0001133_t0041_u01707382949632'
 
 # s3_client = s3.client(conn_config)
-s3_session = S3Session(conn_config, bucket)
-http_session = HttpSession()
+s3_session = s3.S3Session(conn_config, bucket)
+http_session = http_url.HttpSession()
+b2_session = b2.B2Session(conn_config)
 
 ## B2
 # auth_file_path = script_path.joinpath('auth_file.sqlite')
@@ -60,7 +68,10 @@ http_session = HttpSession()
 
 # info = b2.InMemoryAccountInfo()
 
-# b2_api = b2.B2Api(info)
+# b2_api = b2.B2Api(info, cache=b2.InMemoryCache())
+# # Auth here
+# bucket = b2_api.get_bucket_by_id('e063bcbc0d6523df74ed0e1d')
+
 
 # session = B2Session(info)
 
@@ -76,7 +87,6 @@ http_session = HttpSession()
 # res.fetchone()
 # res = cur.execute("UPDATE account SET download_url='https://b2.tethys-ts.xyz'")
 # conn.commit()
-
 
 
 
@@ -170,7 +180,7 @@ def test_s3_list_objects():
     count = 0
     found_key = False
     resp = s3_session.list_objects()
-    for i, js in enumerate(resp.metadata['contents']):
+    for i, js in enumerate(resp.metadata['objects']):
         count += 1
         if js['key'] == obj_key:
             found_key = True
@@ -185,7 +195,7 @@ def test_s3_list_object_versions():
     count = 0
     found_key = False
     resp = s3_session.list_object_versions()
-    for i, js in enumerate(resp.metadata['versions']):
+    for i, js in enumerate(resp.metadata['objects']):
         count += 1
         if js['key'] == obj_key:
             found_key = True
@@ -213,7 +223,7 @@ def test_http_url_get_object():
     stream1 = http_session.get_object(url)
     data1 = stream1.stream.read()
 
-    new_url = http_url.join_url_obj_key(obj_key, base_url)
+    new_url = http_url.join_url_key(obj_key, base_url)
 
     stream2 = http_session.get_object(new_url)
     data2 = stream2.stream.read()
@@ -239,7 +249,7 @@ def test_http_url_head_object():
     assert 'version_id' in response.metadata
 
 
-def test_legal_hold():
+def test_s3_legal_hold():
     """
 
     """
@@ -280,13 +290,13 @@ def test_legal_hold():
     assert True
 
 
-def test_delete_objects():
+def test_s3_delete_objects():
     """
 
     """
     obj_keys = []
     resp = s3_session.list_object_versions()
-    for js in resp.metadata['versions']:
+    for js in resp.metadata['objects']:
         if js['key'] == obj_key:
             obj_keys.append({'key': js['key'], 'version_id': js['version_id']})
 
@@ -294,7 +304,7 @@ def test_delete_objects():
 
     found_key = False
     resp = s3_session.list_object_versions()
-    for i, js in enumerate(resp.metadata['versions']):
+    for i, js in enumerate(resp.metadata['objects']):
         if js['key'] == obj_key:
             found_key = True
 
@@ -348,6 +358,139 @@ def s3lock_loop():
                             print(('Other mod date was earlier.'))
                             # raise ValueError('Other mod date was earlier.')
 
+
+####################################################
+### B2
+
+
+def test_b2_put_object():
+    """
+
+    """
+    ### Upload with bytes
+    with io.open(script_path.joinpath(file_name), 'rb') as f:
+        obj = f.read()
+
+    resp1 = b2_session.put_object(obj_key, obj)
+
+    meta = resp1.metadata
+    if meta['status'] != 200:
+        raise ValueError('Upload failed')
+
+    resp1_sha1 = meta['content_sha1']
+
+    ## Upload with a file-obj
+    resp2 = b2_session.put_object(obj_key, io.open(script_path.joinpath(file_name), 'rb'))
+
+    meta = resp2.metadata
+    if meta['status'] != 200:
+        raise ValueError('Upload failed')
+
+    resp2_sha1 = meta['content_sha1']
+
+    assert resp1_sha1 == resp2_sha1
+
+
+def test_b2_list_objects():
+    """
+
+    """
+    count = 0
+    found_key = False
+    resp = b2_session.list_objects()
+    for i, js in enumerate(resp.metadata['objects']):
+        count += 1
+        if js['key'] == obj_key:
+            found_key = True
+
+    assert found_key
+
+
+def test_b2_list_object_versions():
+    """
+
+    """
+    count = 0
+    found_key = False
+    resp = b2_session.list_object_versions()
+    for i, js in enumerate(resp.metadata['objects']):
+        count += 1
+        if js['key'] == obj_key:
+            found_key = True
+
+    assert found_key
+
+
+def test_b2_get_object():
+    """
+
+    """
+    stream1 = b2_session.get_object(obj_key)
+    data1 = stream1.stream.read()
+
+    # stream2 = b2_session.get_object(obj_key)
+    # data2 = stream2.stream.read()
+
+    assert len(data1) > 10000
+
+
+def test_b2_head_object():
+    """
+
+    """
+    response = b2_session.head_object(obj_key)
+
+    assert 'version_id' in response.metadata
+
+
+def test_b2_delete_objects():
+    """
+
+    """
+    # obj_keys = []
+    resp = b2_session.list_object_versions()
+    for js in resp.metadata['objects']:
+        if js['key'] == obj_key:
+            # obj_keys.append({'key': js['key'], 'version_id': js['version_id']})
+
+            b2_session.delete_object(js['key'], js['version_id'])
+
+    found_key = False
+    resp = b2_session.list_object_versions()
+    for i, js in enumerate(resp.metadata['objects']):
+        if js['key'] == obj_key:
+            found_key = True
+
+    assert not found_key
+
+
+def test_B2Lock():
+    """
+
+    """
+    s3lock = b2_session.b2lock(obj_key)
+
+    other_locks = s3lock.other_locks()
+
+    assert isinstance(other_locks, dict)
+
+    if other_locks:
+        _ = s3lock.break_other_locks()
+
+    assert not s3lock.locked()
+
+    assert s3lock.aquire()
+
+    assert s3lock.locked()
+
+    s3lock.release()
+
+    assert not s3lock.locked()
+
+    with s3lock:
+        assert s3lock.locked()
+
+    assert not s3lock.locked()
 
 # def resp_delay_test(n):
 #     """

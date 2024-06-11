@@ -8,8 +8,11 @@ Created on Sat Oct  8 11:02:46 2022
 # import io
 # import os
 # import pandas as pd
+import orjson
+import urllib.parse
 import urllib3
 import botocore
+from typing import Optional
 from pydantic import BaseModel, HttpUrl
 from urllib3.util import Retry, Timeout
 import datetime
@@ -22,32 +25,120 @@ import datetime
 #     'contabo': '{base_url}:{bucket}/{obj_key}',
 #     }
 
+b2_field_mappings = {
+    'accountId': 'owner',
+    'action': 'action',
+    'bucketId': 'bucket_id',
+    'contentLength': 'content_length',
+    'contentMd5': 'content_md5',
+    'contentSha1': 'content_sha1',
+    'contentType': 'content_type',
+    'fileId': 'version_id',
+    'fileName': 'key',
+    'fileRetention': 'object_retention',
+    'legalHold': 'legal_hold',
+    'uploadTimestamp': 'upload_timestamp'
+    }
+
+
 
 ##################################################
 ### pydantic classes
 
 
-class ConnectionConfig(BaseModel):
+class S3ConnectionConfig(BaseModel):
     service_name: str
-    endpoint_url: HttpUrl
+    endpoint_url: Optional[HttpUrl]=None
     aws_access_key_id: str
     aws_secret_access_key: str
 
+
+class B2ConnectionConfig(BaseModel):
+    application_key_id: str
+    application_key: str
 
 
 #######################################################
 ### Helper Functions
 
 
-def build_s3_params(bucket: str, obj_key: str=None, start_after: str=None, prefix: str=None, delimiter: str=None, max_keys: int=None, key_marker: str=None, object_legal_hold: bool=False, range_start: int=None, range_end: int=None, metadata: dict={}, content_type: str=None, version_id: str=None):
+def build_conn_config(connection_config, service_name):
+    """
+
+    """
+    if 'service_name' not in connection_config:
+        raise ValueError('service_name not in connection_config.')
+
+    # service_name = connection_config['service_name'].lower()
+
+    service_name = service_name.lower()
+    conn_config = {}
+    if service_name == 's3':
+        if 'aws_access_key_id' not in connection_config:
+            if 'access_key_id' in connection_config:
+                conn_config['aws_access_key_id'] = connection_config['access_key_id']
+            elif 'application_key_id' in connection_config:
+                conn_config['aws_access_key_id'] = connection_config['application_key_id']
+            else:
+                raise ValueError('Nothing available to represent aws_access_key_id.')
+        else:
+            conn_config['aws_access_key_id'] = connection_config['aws_access_key_id']
+
+        if 'aws_secret_access_key' not in connection_config:
+            if 'secret_access_key' in connection_config:
+                conn_config['aws_secret_access_key'] = connection_config['secret_access_key']
+            elif 'application_key_id' in connection_config:
+                conn_config['aws_secret_access_key'] = connection_config['application_key']
+            else:
+                raise ValueError('Nothing available to represent aws_secret_access_key.')
+        else:
+            conn_config['aws_secret_access_key'] = connection_config['aws_secret_access_key']
+
+        if 'endpoint_url' in connection_config:
+            conn_config['endpoint_url'] = connection_config['endpoint_url']
+
+        conn_config['service_name'] = service_name
+
+        _ = S3ConnectionConfig(**conn_config)
+
+    elif service_name == 'b2':
+        if 'application_key_id' not in connection_config:
+            if 'access_key_id' in connection_config:
+                conn_config['application_key_id'] = connection_config['access_key_id']
+            elif 'aws_access_key_id' in connection_config:
+                conn_config['application_key_id'] = connection_config['aws_access_key_id']
+            else:
+                raise ValueError('Nothing available to represent application_key_id.')
+        else:
+            conn_config['application_key_id'] = connection_config['application_key_id']
+
+        if 'application_key' not in connection_config:
+            if 'secret_access_key' in connection_config:
+                conn_config['application_key'] = connection_config['secret_access_key']
+            elif 'aws_secret_access_key' in connection_config:
+                conn_config['application_key'] = connection_config['aws_secret_access_key']
+            else:
+                raise ValueError('Nothing available to represent aws_secret_access_key.')
+        else:
+            conn_config['application_key'] = connection_config['application_key']
+
+        _ = B2ConnectionConfig(**conn_config)
+
+    else:
+        raise ValueError('service_name must be either s3 or b2.')
+
+    return conn_config
+
+
+def build_s3_params(bucket: str, key: str=None, start_after: str=None, prefix: str=None, delimiter: str=None, max_keys: int=None, key_marker: str=None, object_legal_hold: bool=False, range_start: int=None, range_end: int=None, metadata: dict={}, content_type: str=None, version_id: str=None):
     """
 
     """
     params = {'Bucket': bucket}
     if start_after:
         params['StartAfter'] = start_after
-    if obj_key:
-        params['Key'] = obj_key
+    if key:
+        params['Key'] = key
     if prefix:
         params['Prefix'] = prefix
     if delimiter:
@@ -111,15 +202,17 @@ def build_url_headers(range_start: int=None, range_end: int=None):
     return params
 
 
-def build_b2_query_params(bucket: str, obj_key: str=None, start_after: str=None, prefix: str=None, delimiter: str=None, max_keys: int=None, key_marker: str=None, object_legal_hold: bool=False, range_start: int=None, range_end: int=None, metadata: dict={}, content_type: str=None, version_id: str=None):
+def build_b2_query_params(bucket: str=None, key: str=None, start_after: str=None, prefix: str=None, delimiter: str=None, max_keys: int=None, key_marker: str=None, object_legal_hold: bool=False, range_start: int=None, range_end: int=None, metadata: dict={}, content_type: str=None, version_id: str=None):
     """
 
     """
-    params = {'bucketId': bucket}
+    params = {}
+    if bucket:
+        params['bucketId'] = bucket
     if start_after:
         params['startFileName'] = start_after
-    if obj_key:
-        params['key'] = obj_key
+    if key:
+        params['fileName'] = key
     if prefix:
         params['prefix'] = prefix
     if delimiter:
@@ -134,8 +227,8 @@ def build_b2_query_params(bucket: str, obj_key: str=None, start_after: str=None,
     #     params['Metadata'] = metadata
     # if content_type:
     #     params['ContentType'] = content_type
-    # if version_id:
-    #     params['VersionId'] = version_id
+    if version_id:
+        params['fileId'] = version_id
 
     # Range
     # if (range_start is not None) or (range_end is not None):
@@ -191,12 +284,14 @@ def add_metadata_from_urllib3(response):
 
     for key, value in headers.items():
         if key == 'Content-Length':
-            metadata['content_length'] = int(headers['Content-Length'])
+            metadata['content_length'] = int(value)
+        elif key == 'x-bz-file-name':
+            metadata['key'] = value
         elif key == 'x-bz-file-id':
-            metadata['version_id'] = headers['x-bz-file-id']
-            metadata['upload_timestamp'] = datetime.datetime.fromtimestamp(int(headers['x-bz-file-id'].split('_u')[1]) * 0.001, datetime.timezone.utc)
+            metadata['version_id'] = value
+            metadata['upload_timestamp'] = datetime.datetime.fromtimestamp(int(value.split('_u')[1]) * 0.001, datetime.timezone.utc)
         elif key == 'X-Bz-Upload-Timestamp':
-            metadata['upload_timestamp'] = datetime.datetime.fromtimestamp(int(headers['X-Bz-Upload-Timestamp']) * 0.001, datetime.timezone.utc)
+            metadata['upload_timestamp'] = datetime.datetime.fromtimestamp(int(value) * 0.001, datetime.timezone.utc)
         elif 'x-bz-info-' in key:
             new_key = key.split('x-bz-info-')[1]
             metadata[new_key] = value
@@ -235,6 +330,25 @@ def add_metadata_from_s3(response):
 
     return metadata
 
+
+def get_metadata_from_b2_put_object(response):
+    """
+    Function to create metadata from the b2 put_object response body.
+    """
+    data = orjson.loads(response.data)
+
+    meta = {}
+    for key, val in data.items():
+        if key in b2_field_mappings:
+            if key == 'contentSha1':
+                if 'unverified:' in val:
+                    val = val.split('unverified:')[1]
+            meta[b2_field_mappings[key]] = val
+
+    if 'upload_timestamp' in meta:
+        meta['upload_timestamp'] = datetime.datetime.fromtimestamp(meta['upload_timestamp'] * 0.001, datetime.timezone.utc)
+
+    return meta
 
 
 
@@ -319,15 +433,14 @@ class S3ListResponse:
             resp = func(**kwargs)
             status = resp['ResponseMetadata']['HTTPStatusCode']
 
-            contents = []
-            versions = []
+            objects = []
             del_markers = []
             while True:
                 if 'Versions' in resp:
                     for js in resp['Versions']:
-                        versions.append({
+                        objects.append({
                             'etag': js['ETag'].strip('"'),
-                            'size': js['Size'],
+                            'content_length': js['Size'],
                             'key': js['Key'],
                             'version_id': js['VersionId'],
                             'is_latest': js['IsLatest'],
@@ -350,9 +463,9 @@ class S3ListResponse:
 
                 elif 'Contents' in resp:
                     for js in resp['Contents']:
-                        contents.append({
+                        objects.append({
                             'etag': js['ETag'].strip('"'),
-                            'size': js['Size'],
+                            'content_length': js['Size'],
                             'key': js['Key'],
                             'upload_timestamp': js['LastModified'],
                             })
@@ -366,10 +479,8 @@ class S3ListResponse:
                 resp = func(**kwargs)
 
             metadata = {'status': status}
-            if contents:
-                metadata['contents'] = contents
-            if versions:
-                metadata['versions'] = versions
+            if objects:
+                metadata['objects'] = objects
             if del_markers:
                 metadata['delete_markers'] = del_markers
 
@@ -385,6 +496,12 @@ class S3ListResponse:
         self.stream = None
         self.error = error
         self.status = status
+
+    def __repr__(self):
+        """
+
+        """
+        return f'status: {self.status}'
 
 
 class S3Response:
@@ -424,6 +541,12 @@ class S3Response:
         self.error = error
         self.status = status
 
+    def __repr__(self):
+        """
+
+        """
+        return f'status: {self.status}'
+
 
 class HttpResponse:
     """
@@ -438,7 +561,7 @@ class HttpResponse:
         metadata = add_metadata_from_urllib3(response)
 
         if (response.status // 100) != 2:
-            error = response.json()
+            error = orjson.loads(response.data)
         else:
             stream = response
 
@@ -448,11 +571,109 @@ class HttpResponse:
         self.error = error
         self.status = response.status
 
+    def __repr__(self):
+        """
+
+        """
+        return f'status: {self.status}'
 
 
+class B2Response:
+    """
+
+    """
+    def __init__(self, response: urllib3.HTTPResponse):
+        """
+
+        """
+        stream = None
+        error = {}
+        metadata = add_metadata_from_urllib3(response)
+
+        if (response.status // 100) != 2:
+            error = orjson.loads(response.data)
+        else:
+            stream = response
+
+        self.headers = dict(response.headers)
+        self.metadata = metadata
+        self.stream = stream
+        self.error = error
+        self.status = response.status
+
+    def __repr__(self):
+        """
+
+        """
+        return f'status: {self.status}'
 
 
+class B2ListResponse:
+    """
 
+    """
+    def __init__(self, request, session, api_url, headers, params):
+        """
+
+        """
+        url = urllib.parse.urljoin(api_url, request)
+
+        objects = []
+        while True:
+            resp = session.request('get', url, headers=headers, fields=params)
+            data = orjson.loads(resp.data)
+
+            if 'files' in data:
+                for js in data['files']:
+                    if 'unverified:' in js['contentSha1']:
+                        js['contentSha1'] = js['contentSha1'].split('unverified:')[1]
+                    dict1 = {
+                        'action': js['action'],
+                        'content_length': js['contentLength'],
+                        'content_md5': js['contentMd5'],
+                        'content_sha1': js['contentSha1'],
+                        'content_type': js['contentType'],
+                        'key': js['fileName'],
+                        'version_id': js['fileId'],
+                        'upload_timestamp': datetime.datetime.fromtimestamp(js['uploadTimestamp']*0.001, datetime.timezone.utc),
+                        'owner': js['accountId'],
+                        }
+                    if 'fileInfo' in js:
+                        for fi, val in js['fileInfo'].items():
+                            if fi == 'src_last_modified_millis':
+                                dict1['last_modified'] = datetime.datetime.fromtimestamp(int(val)*0.001, datetime.timezone.utc)
+                            else:
+                                dict1[fi] = val
+                    objects.append(dict1)
+
+                if data['nextFileName'] is None:
+                    break
+                else:
+                    params['startFileName'] = data['nextFileName']
+                    if 'nextFileId' in data:
+                        params['startFileId'] = data['nextFileId']
+            else:
+                break
+
+        error = {}
+        metadata = add_metadata_from_urllib3(resp)
+        if objects:
+            metadata['objects'] = objects
+
+        if (resp.status // 100) != 2:
+            error = orjson.loads(resp.data)
+
+        self.headers = dict(resp.headers)
+        self.metadata = metadata
+        self.stream = None
+        self.error = error
+        self.status = resp.status
+
+    def __repr__(self):
+        """
+
+        """
+        return f'status: {self.status}'
 
 
 # try:
