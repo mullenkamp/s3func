@@ -340,7 +340,7 @@ def get_metadata_from_b2_put_object(response):
     meta = {}
     for key, val in data.items():
         if key in b2_field_mappings:
-            if key == 'contentMd5':
+            if key == 'contentSha1':
                 if 'unverified:' in val:
                     val = val.split('unverified:')[1]
             meta[b2_field_mappings[key]] = val
