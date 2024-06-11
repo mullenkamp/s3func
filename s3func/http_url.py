@@ -14,8 +14,8 @@ from urllib3.util import Retry, Timeout
 # from requests.adapters import HTTPAdapter
 import urllib3
 
-from . import utils
-# import utils
+# from . import utils
+import utils
 
 #######################################################
 ### Parameters
@@ -26,7 +26,7 @@ from . import utils
 ### Functions
 
 
-def session(max_pool_connections: int = 10, max_attempts: int=3, read_timeout: int=120):
+def session(max_pool_connections: int = 10, max_attempts: int=3, timeout: int=120):
     """
     Function to setup a urllib3 pool manager for url downloads.
 
@@ -36,14 +36,14 @@ def session(max_pool_connections: int = 10, max_attempts: int=3, read_timeout: i
         The number of simultaneous connections for the S3 connection.
     max_attempts: int
         The number of retries if the connection fails.
-    read_timeout: int
-        The read timeout in seconds.
+    timeout: int
+        The timeout in seconds.
 
     Returns
     -------
     Pool Manager object
     """
-    timeout = urllib3.util.Timeout(read_timeout)
+    timeout = urllib3.util.Timeout(timeout)
     retries = Retry(
         total=max_attempts,
         backoff_factor=1,
@@ -53,13 +53,13 @@ def session(max_pool_connections: int = 10, max_attempts: int=3, read_timeout: i
     return http
 
 
-def join_url_obj_key(obj_key: str, base_url: HttpUrl):
+def join_url_key(key: str, base_url: HttpUrl):
     """
 
     """
     if not base_url.endswith('/'):
         base_url += '/'
-    url = urllib.parse.urljoin(base_url, obj_key)
+    url = urllib.parse.urljoin(base_url, key)
 
     return url
 
@@ -89,9 +89,10 @@ class HttpSession:
         http_session = session(max_pool_connections, max_attempts, read_timeout)
 
         self._session = http_session
+        # self.buffer_size = buffer_size
 
 
-    def get_object(self, url: HttpUrl, range_start: int=None, range_end: int=None, chunk_size: int=524288):
+    def get_object(self, url: HttpUrl, range_start: int=None, range_end: int=None):
         """
         Use a GET request to download the body and headers of a url.
 

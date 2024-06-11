@@ -5,6 +5,8 @@ import io
 import sys
 from time import sleep
 from timeit import default_timer
+from threading import current_thread
+import concurrent.futures
 import datetime
 try:
     import tomllib as toml
@@ -36,6 +38,9 @@ except:
         'aws_secret_access_key': os.environ['aws_secret_access_key'],
         }
 
+# b2_conn_config = {'application_key_id': s3_conn_config['aws_access_key_id'],
+#                   'application_key': s3_conn_config['aws_secret_access_key']
+#                   }
 
 bucket = 'achelous'
 bucket_id = 'e063bcbc0d6523df74ed0e1d'
@@ -46,13 +51,16 @@ threads = 10
 object_lock = False
 file_name = 'stns_data.blt'
 # obj_key = uuid.uuid4().hex
+# obj_key = 'gwrc_flow_sensor_sites.gpkg'
 obj_key = 'manual_test_key'
 base_url = 'https://b2.tethys-ts.xyz/file/' + bucket + '/'
 url = base_url +  obj_key
+version_id = '4_ze063bcbc0d6523df74ed0e1d_f101bf5d3b78267d4_d20240208_m090229_c002_v0001133_t0041_u01707382949632'
 
 # s3_client = s3.client(conn_config)
 s3_session = S3Session(conn_config, bucket)
 http_session = HttpSession()
+self = B2Session(conn_config)
 
 ## B2
 # auth_file_path = script_path.joinpath('auth_file.sqlite')
@@ -81,6 +89,31 @@ http_session = HttpSession()
 # conn.commit()
 
 
+class Shared:
+    text = None
+
+
+shared = Shared()
+
+
+def thread_test(data):
+    """
+
+    """
+    thread_name = current_thread().name
+    data.text = thread_name
+    sleep(1)
+    print(f'{thread_name} - {data.text}')
+    return thread_name, data.text
+
+
+with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+    futures = []
+    for i in range(20):
+        future = executor.submit(thread_test, shared)
+        futures.append(future)
+
+    results = [future.result() for future in concurrent.futures.as_completed(futures)]
 
 
 
