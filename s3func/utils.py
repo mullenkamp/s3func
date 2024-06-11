@@ -29,7 +29,7 @@ b2_field_mappings = {
     'accountId': 'owner',
     'action': 'action',
     'bucketId': 'bucket_id',
-    'contentLength': 'size',
+    'contentLength': 'content_length',
     'contentMd5': 'content_md5',
     'contentSha1': 'content_sha1',
     'contentType': 'content_type',
@@ -440,7 +440,7 @@ class S3ListResponse:
                     for js in resp['Versions']:
                         objects.append({
                             'etag': js['ETag'].strip('"'),
-                            'size': js['Size'],
+                            'content_length': js['Size'],
                             'key': js['Key'],
                             'version_id': js['VersionId'],
                             'is_latest': js['IsLatest'],
@@ -465,7 +465,7 @@ class S3ListResponse:
                     for js in resp['Contents']:
                         objects.append({
                             'etag': js['ETag'].strip('"'),
-                            'size': js['Size'],
+                            'content_length': js['Size'],
                             'key': js['Key'],
                             'upload_timestamp': js['LastModified'],
                             })
@@ -629,7 +629,7 @@ class B2ListResponse:
                         js['contentSha1'] = js['contentSha1'].split('unverified:')[1]
                     dict1 = {
                         'action': js['action'],
-                        'size': js['contentLength'],
+                        'content_length': js['contentLength'],
                         'content_md5': js['contentMd5'],
                         'content_sha1': js['contentSha1'],
                         'content_type': js['contentType'],
