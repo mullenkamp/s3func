@@ -41,6 +41,7 @@ requirements:
     - boto3
     - urllib3 >=2
     - pydantic
+    - orjson
 
 test:
   imports:
