@@ -432,7 +432,7 @@ class B2Session:
             if resp.status // 100 != 2:
                 raise urllib3.exceptions.HTTPError(f'{resp.error}')
 
-            data = orjson.loads(resp.stream.data)
+            data = orjson.loads(resp.data)
 
             storage_api = data['apiInfo']['storageApi']
             if 'bucketId' in storage_api:
