@@ -402,7 +402,7 @@ class B2Session:
     """
 
     """
-    def __init__(self, connection_config: dict=None, bucket: str=None, max_pool_connections: int = 10, max_attempts: int=3, read_timeout: int=120, download_url: HttpUrl=None):
+    def __init__(self, connection_config: dict=None, bucket: str=None, max_pool_connections: int = 10, max_attempts: int=3, read_timeout: int=120, download_url: HttpUrl=None, stream=True):
         """
         Establishes an B2 client connection with a B2 account. If connection_config is None, then only get_object and head_object methods are available.
 
@@ -420,6 +420,8 @@ class B2Session:
             The read timeout in seconds.
         download_url : HttpUrl
             An alternative download_url when downloading data. If None, the download_url will be retrieved from the initial b2 request. It should NOT include the file/ at the end of the url.
+        stream : bool
+            Should the connection stay open for streaming or should all the data/content be loaded during the initial request.
         """
         b2_session = http_url.session(max_pool_connections, max_attempts, read_timeout)
 
@@ -460,6 +462,7 @@ class B2Session:
         self.bucket = bucket
         self.download_url = download_url
         self._upload_url_data = {}
+        self._stream = stream
         # self._upload_auth_token = None
 
 
@@ -493,7 +496,7 @@ class B2Session:
         url = urllib.parse.urljoin(self.api_url, '/b2api/v3/b2_create_key')
 
         resp = self._session.request('post', url, json=fields, headers=headers)
-        b2resp = utils.B2Response(resp)
+        b2resp = utils.B2Response(resp, self._stream)
 
         return b2resp
 
@@ -511,7 +514,7 @@ class B2Session:
         url += f'?accountId={self.account_id}'
 
         resp = self._session.request('get', url, headers=headers)
-        b2resp = utils.HttpResponse(resp)
+        b2resp = utils.B2Response(resp, self._stream)
 
         return b2resp
 
@@ -540,14 +543,13 @@ class B2Session:
         if isinstance(version_id, str):
             url = urllib.parse.urljoin(self.download_url, download_file_by_id_str)
             url += f'?fileId={version_id}'
-            resp = self._session.request('get', url, headers=headers, preload_content=False)
-            b2resp = utils.B2Response(resp)
         else:
             if key.startswith('/'):
                 key = key[1:]
             url = urllib.parse.urljoin(self.download_url, 'file/' + self.bucket + '/' + key)
-            resp = self._session.request('get', url, headers=headers, preload_content=False)
-            b2resp = utils.B2Response(resp)
+
+        resp = self._session.request('get', url, headers=headers, preload_content=not self._stream)
+        b2resp = utils.B2Response(resp, self._stream)
 
         return b2resp
 
@@ -576,14 +578,13 @@ class B2Session:
         if isinstance(version_id, str):
             url = urllib.parse.urljoin(self.download_url, download_file_by_id_str)
             url += f'?fileId={version_id}'
-            resp = self._session.request('head', url, headers=headers, preload_content=False)
-            b2resp = utils.B2Response(resp)
         else:
             if key.startswith('/'):
                 key = key[1:]
             url = urllib.parse.urljoin(self.download_url, 'file/' + self.bucket + '/' + key)
-            resp = self._session.request('head', url, headers=headers, preload_content=False)
-            b2resp = utils.B2Response(resp)
+
+        resp = self._session.request('head', url, headers=headers, preload_content=not self._stream)
+        b2resp = utils.B2Response(resp, self._stream)
 
         return b2resp
 
@@ -694,7 +695,7 @@ class B2Session:
             headers['Authorization'] = upload_url_data['auth_token']
             upload_url = upload_url_data['upload_url']
 
-        b2resp = utils.B2Response(resp)
+        b2resp = utils.B2Response(resp, self._stream)
         b2resp.metadata.update(utils.get_metadata_from_b2_put_object(resp))
 
         return b2resp
@@ -786,7 +787,7 @@ class B2Session:
 
         url = urllib.parse.urljoin(self.api_url, '/b2api/v3/b2_delete_file_version')
         resp = self._session.request('post', url, headers=headers, json=params)
-        b2resp = utils.B2Response(resp)
+        b2resp = utils.B2Response(resp, self._stream)
 
         return b2resp
 

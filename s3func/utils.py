@@ -508,10 +508,11 @@ class S3Response:
     """
 
     """
-    def __init__(self, s3_client, method, **kwargs):
+    def __init__(self, s3_client, method, stream_resp, **kwargs):
         """
 
         """
+        data = None
         stream = None
         error = {}
 
@@ -525,7 +526,10 @@ class S3Response:
 
             if 'Body' in resp:
                 if isinstance(resp['Body'], botocore.response.StreamingBody):
-                    stream = resp.pop('Body')
+                    if stream_resp:
+                        stream = resp.pop('Body')
+                    else:
+                        data = resp.pop('Body').read()
                 else:
                     del resp['Body']
         except s3_client.exceptions.ClientError as err:
@@ -537,6 +541,7 @@ class S3Response:
 
         self.headers = resp
         self.metadata = metadata
+        self.data = data
         self.stream = stream
         self.error = error
         self.status = status
@@ -552,10 +557,11 @@ class HttpResponse:
     """
 
     """
-    def __init__(self, response: urllib3.HTTPResponse):
+    def __init__(self, response: urllib3.HTTPResponse, stream_resp):
         """
 
         """
+        data = None
         stream = None
         error = {}
         metadata = add_metadata_from_urllib3(response)
@@ -563,10 +569,14 @@ class HttpResponse:
         if (response.status // 100) != 2:
             error = orjson.loads(response.data)
         else:
-            stream = response
+            if stream_resp:
+                stream = response
+            else:
+                data = response.data
 
         self.headers = dict(response.headers)
         self.metadata = metadata
+        self.data = data
         self.stream = stream
         self.error = error
         self.status = response.status
@@ -582,10 +592,11 @@ class B2Response:
     """
 
     """
-    def __init__(self, response: urllib3.HTTPResponse):
+    def __init__(self, response: urllib3.HTTPResponse, stream_resp):
         """
 
         """
+        data = None
         stream = None
         error = {}
         metadata = add_metadata_from_urllib3(response)
@@ -593,10 +604,14 @@ class B2Response:
         if (response.status // 100) != 2:
             error = orjson.loads(response.data)
         else:
-            stream = response
+            if stream_resp:
+                stream = response
+            else:
+                data = response.data
 
         self.headers = dict(response.headers)
         self.metadata = metadata
+        self.data = data
         self.stream = stream
         self.error = error
         self.status = response.status

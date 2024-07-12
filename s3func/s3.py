@@ -377,7 +377,7 @@ class S3Session:
     """
 
     """
-    def __init__(self, connection_config: dict, bucket: str,  max_pool_connections: int = 10, max_attempts: int = 3, retry_mode: str='adaptive', read_timeout: int=120):
+    def __init__(self, connection_config: dict, bucket: str,  max_pool_connections: int = 10, max_attempts: int = 3, retry_mode: str='adaptive', read_timeout: int=120, stream=True):
         """
         Establishes an S3 client connection with an S3 account. This can use the legacy connect (signature_version s3) and the current version.
 
@@ -395,11 +395,14 @@ class S3Session:
             The retry mode passed to the "retries" option in the S3 config.
         read_timeout: int
             The read timeout in seconds passed to the "retries" option in the S3 config.
+        stream : bool
+            Should the connection stay open for streaming or should all the data/content be loaded during the initial request.
         """
         s3 = client(connection_config, max_pool_connections, max_attempts, retry_mode, read_timeout)
 
         self._client = s3
         self.bucket = bucket
+        self._stream = stream
         # self.buffer_size = buffer_size
 
 
@@ -427,7 +430,7 @@ class S3Session:
         ## Get the object
         params = utils.build_s3_params(self.bucket, key=key, version_id=version_id, range_start=range_start, range_end=range_end)
 
-        s3resp = utils.S3Response(self._client, 'get_object', **params)
+        s3resp = utils.S3Response(self._client, 'get_object', self._stream, **params)
 
         return s3resp
 
@@ -449,7 +452,7 @@ class S3Session:
         """
         params = utils.build_s3_params(self.bucket, key=key, version_id=version_id)
 
-        s3resp = utils.S3Response(self._client, 'head_object', **params)
+        s3resp = utils.S3Response(self._client, 'head_object', self._stream, **params)
 
         return s3resp
 
@@ -481,7 +484,7 @@ class S3Session:
         params = utils.build_s3_params(self.bucket, key=key, metadata=metadata, content_type=content_type, object_legal_hold=object_legal_hold)
         params['Body'] = obj
 
-        s3resp = utils.S3Response(self._client, 'put_object', **params)
+        s3resp = utils.S3Response(self._client, 'put_object', self._stream, **params)
         s3resp.metadata.update(metadata)
 
         return s3resp
@@ -555,7 +558,7 @@ class S3Session:
         """
         params = utils.build_s3_params(self.bucket, key=key, version_id=version_id)
 
-        s3resp = utils.S3Response(self._client, 'delete_object', **params)
+        s3resp = utils.S3Response(self._client, 'delete_object', self._stream, **params)
 
         return s3resp
 
@@ -606,7 +609,7 @@ class S3Session:
         """
         params = utils.build_s3_params(self.bucket, key=key, version_id=version_id)
 
-        s3resp = utils.S3Response(self._client, 'get_object_legal_hold', **params)
+        s3resp = utils.S3Response(self._client, 'get_object_legal_hold', self._stream, **params)
 
         return s3resp
 
@@ -636,7 +639,7 @@ class S3Session:
         params = utils.build_s3_params(self.bucket, key=key, version_id=version_id)
         params['LegalHold'] = hold
 
-        s3resp = utils.S3Response(self._client, 'put_object_legal_hold', **params)
+        s3resp = utils.S3Response(self._client, 'put_object_legal_hold', self._stream, **params)
 
         return s3resp
 
@@ -649,7 +652,7 @@ class S3Session:
         -------
         S3Reponse
         """
-        s3resp = utils.S3Response(self._client, 'get_object_lock_configuration', Bucket=self.bucket)
+        s3resp = utils.S3Response(self._client, 'get_object_lock_configuration', self._stream, Bucket=self.bucket)
 
         return s3resp
 
@@ -673,7 +676,7 @@ class S3Session:
             hold = {'ObjectLockEnabled': 'Disable'}
 
         # resp = s3.put_object_lock_configuration(Bucket=bucket, ObjectLockConfiguration=hold)
-        s3resp = utils.S3Response(self._client, 'put_object_lock_configuration', Bucket=self.bucket, ObjectLockConfiguration=hold)
+        s3resp = utils.S3Response(self._client, 'put_object_lock_configuration', self._stream, Bucket=self.bucket, ObjectLockConfiguration=hold)
 
         return s3resp
 
