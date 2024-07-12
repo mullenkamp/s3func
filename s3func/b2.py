@@ -107,7 +107,7 @@ def get_authorization(application_key_id, application_key, session):
     headers = urllib3.make_headers(basic_auth=f'{application_key_id}:{application_key}')
 
     response = session.request('get', auth_url, headers=headers)
-    resp = utils.HttpResponse(response)
+    resp = utils.HttpResponse(response, False)
 
     return resp
 
