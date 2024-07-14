@@ -183,3 +183,7 @@ Source = "https://github.com/mullenkamp/s3func"
 include = [
     "/s3func",
 ]
+exclude = [
+  '/s3func/tests/*.csv',
+  '/s3func/tests/*.blt'
+]

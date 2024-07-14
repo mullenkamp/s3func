@@ -289,7 +289,8 @@ def add_metadata_from_urllib3(response):
             metadata['key'] = value
         elif key == 'x-bz-file-id':
             metadata['version_id'] = value
-            metadata['upload_timestamp'] = datetime.datetime.fromtimestamp(int(value.split('_u')[1]) * 0.001, datetime.timezone.utc)
+            if '_u' in value:
+                metadata['upload_timestamp'] = datetime.datetime.fromtimestamp(int(value.split('_u')[1]) * 0.001, datetime.timezone.utc)
         elif key == 'X-Bz-Upload-Timestamp':
             metadata['upload_timestamp'] = datetime.datetime.fromtimestamp(int(value) * 0.001, datetime.timezone.utc)
         elif 'x-bz-info-' in key:
@@ -313,7 +314,8 @@ def add_metadata_from_s3(response):
         metadata['etag'] = response['ETag'].strip('"')
     if 'VersionId' in response:
         metadata['version_id'] = response['VersionId']
-        metadata['upload_timestamp'] = datetime.datetime.fromtimestamp(int(metadata['version_id'].split('_u')[1]) * 0.001, datetime.timezone.utc)
+        if '_u' in metadata['version_id']:
+            metadata['upload_timestamp'] = datetime.datetime.fromtimestamp(int(metadata['version_id'].split('_u')[1]) * 0.001, datetime.timezone.utc)
     if 'ContentLength' in response:
         metadata['content_length'] = response['ContentLength']
     if 'HTTPStatusCode' in response['ResponseMetadata']:
