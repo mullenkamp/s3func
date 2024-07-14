@@ -120,7 +120,7 @@ class B2Lock:
     """
 
     """
-    def __init__(self, b2_session, key: str):
+    def __init__(self, b2_session, key: str, lock_id: str=None):
         """
         This class contains a locking mechanism by utilizing B2 objects. It has implementations for both shared and exclusive (the default) locks. It follows the same locking API as python thread locks (https://docs.python.org/3/library/threading.html#lock-objects), but with some extra methods for managing "deadlocks". The required B2 permissions are ListObjects, WriteObjects, and DeleteObjects.
 
@@ -128,21 +128,27 @@ class B2Lock:
 
         Parameters
         ----------
+        b2_session : S3Session
+            The B2Session object for the connection.
         key : str
             The base object key that will be given a lock. The extension ".lock" plus a unique object id will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten.
+        lock_id : str or None
+            The unique ID used for the lock object. None will create a new ID. Retaining the lock_id will allow the user to use the lock later.
         """
         obj_lock_key = key + '.lock.'
         self._b2_session = b2_session
         _ = self._list_objects(obj_lock_key)
 
-        self._lock_id = uuid.uuid4().hex[:13]
+        if lock_id is None:
+            self.lock_id = uuid.uuid4().hex[:13]
+        else:
+            self.lock_id = lock_id
+
         self._obj_lock_key_len = len(obj_lock_key)
 
         self._version_ids = {0: '', 1: ''}
         self._timestamp = None
 
-        # self._b2_client = b2_client
-        # self._bucket = bucket
         self._obj_lock_key = obj_lock_key
         self._key = key
 
@@ -194,9 +200,9 @@ class B2Lock:
                 if obj['lock_type'] == 'shared':
                     continue
             if 1 not in obj:
-                if self._check_older_timestamp(obj[0], self._timestamp, self._lock_id, obj_id_other):
+                if self._check_older_timestamp(obj[0], self._timestamp, self.lock_id, obj_id_other):
                     res[obj_id_other] = obj
-            elif self._check_older_timestamp(obj[1], self._timestamp, self._lock_id, obj_id_other):
+            elif self._check_older_timestamp(obj[1], self._timestamp, self.lock_id, obj_id_other):
                 res[obj_id_other] = obj
 
         return res
@@ -206,7 +212,7 @@ class B2Lock:
         """
 
         """
-        obj_name = self._obj_lock_key + f'{self._lock_id}-{seq}'
+        obj_name = self._obj_lock_key + f'{self.lock_id}-{seq}'
         _ = self._b2_session.delete_object(obj_name, self._version_ids[seq])
         self._version_ids[seq] = ''
         self._timestamp = None
@@ -225,7 +231,7 @@ class B2Lock:
 
         """
         for seq in (0, 1):
-            obj_name = self._obj_lock_key + f'{self._lock_id}-{seq}'
+            obj_name = self._obj_lock_key + f'{self.lock_id}-{seq}'
             timestamp = datetime.datetime.now(datetime.timezone.utc)
             resp = self._b2_session.put_object(obj_name, body, last_modified=timestamp)
             if ('version_id' in resp.metadata) and (resp.status == 200):
@@ -254,7 +260,7 @@ class B2Lock:
         if objs:
             for l in objs:
                 obj_id, seq = l['key'][self._obj_lock_key_len:].split('-')
-                if obj_id != self._lock_id:
+                if obj_id != self.lock_id:
                     if obj_id in other_locks:
                         other_locks[obj_id].update({int(seq): l['last_modified']})
                     else:
