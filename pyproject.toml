@@ -53,7 +53,7 @@ dependencies = [
 ]
 
 [[tool.hatch.envs.all.matrix]]
-python = ['3.8', '3.9', '3.10']
+python = ['3.9', '3.10', '3.11']
 
 [tool.hatch.envs.lint]
 detached = true
