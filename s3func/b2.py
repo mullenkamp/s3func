@@ -190,9 +190,9 @@ class B2Lock:
         res = []
         if 'objects' in meta:
             for l in meta['objects']:
-                if l['etag'] == md5_locks['exclusive']:
+                if l['content_md5'] == md5_locks['exclusive']:
                     l['lock_type'] = 'exclusive'
-                elif l['etag'] == md5_locks['shared']:
+                elif l['content_md5'] == md5_locks['shared']:
                     l['lock_type'] = 'shared'
                 else:
                     raise ValueError('This lock file was created by something else...')
