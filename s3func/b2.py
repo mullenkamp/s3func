@@ -137,17 +137,28 @@ class B2Lock:
         """
         obj_lock_key = key + '.lock.'
         self._b2_session = b2_session
-        _ = self._list_objects(obj_lock_key)
+        objs = self._list_objects(obj_lock_key)
+
+        version_ids = {0: '', 1: ''}
+        timestamp = None
 
         if lock_id is None:
             self.lock_id = uuid.uuid4().hex[:13]
         else:
             self.lock_id = lock_id
+            if objs:
+                for obj in objs:
+                    key = obj['key']
+                    if lock_id in key:
+                        seq = int(key[-1])
+                        version_ids[seq] = obj['version_id']
+                        if seq == 1:
+                            timestamp = obj['last_modified']
 
+        self._version_ids = version_ids
         self._obj_lock_key_len = len(obj_lock_key)
 
-        self._version_ids = {0: '', 1: ''}
-        self._timestamp = None
+        self._timestamp = timestamp
 
         self._obj_lock_key = obj_lock_key
         self._key = key
@@ -177,12 +188,12 @@ class B2Lock:
 
 
     @staticmethod
-    def _check_older_timestamp(timestamp_other, timestamp, obj_id, obj_id_other):
+    def _check_older_timestamp(timestamp_other, timestamp, lock_id, lock_id_other):
         """
 
         """
         if timestamp_other == timestamp:
-            if obj_id_other < obj_id:
+            if lock_id_other < lock_id:
                 return True
         if timestamp_other < timestamp:
             return True
@@ -195,15 +206,15 @@ class B2Lock:
 
         """
         res = {}
-        for obj_id_other, obj in objs.items():
+        for lock_id_other, obj in objs.items():
             if not all_locks:
                 if obj['lock_type'] == 'shared':
                     continue
             if 1 not in obj:
-                if self._check_older_timestamp(obj[0], self._timestamp, self.lock_id, obj_id_other):
-                    res[obj_id_other] = obj
-            elif self._check_older_timestamp(obj[1], self._timestamp, self.lock_id, obj_id_other):
-                res[obj_id_other] = obj
+                if self._check_older_timestamp(obj[0], self._timestamp, self.lock_id, lock_id_other):
+                    res[lock_id_other] = obj
+            elif self._check_older_timestamp(obj[1], self._timestamp, self.lock_id, lock_id_other):
+                res[lock_id_other] = obj
 
         return res
 
@@ -259,12 +270,12 @@ class B2Lock:
 
         if objs:
             for l in objs:
-                obj_id, seq = l['key'][self._obj_lock_key_len:].split('-')
-                if obj_id != self.lock_id:
-                    if obj_id in other_locks:
-                        other_locks[obj_id].update({int(seq): l['last_modified']})
+                lock_id, seq = l['key'][self._obj_lock_key_len:].split('-')
+                if lock_id != self.lock_id:
+                    if lock_id in other_locks:
+                        other_locks[lock_id].update({int(seq): l['last_modified']})
                     else:
-                        other_locks[obj_id] = {int(seq): l['last_modified'],
+                        other_locks[lock_id] = {int(seq): l['last_modified'],
                                                'lock_type': l['lock_type'],
                                                }
         return other_locks
@@ -284,11 +295,13 @@ class B2Lock:
 
         if objs:
             for l in objs:
-                obj_id, seq = l['key'][self._obj_lock_key_len:].split('-')
-                other_locks[obj_id] = {'last_modified': l['last_modified'],
-                                       'lock_type': l['lock_type'],
-                                       'owner': l['owner'],
-                                       }
+                lock_id, seq = l['key'][self._obj_lock_key_len:].split('-')
+                if lock_id != self.lock_id:
+                    other_locks[lock_id] = {'last_modified': l['last_modified'],
+                                           'lock_type': l['lock_type'],
+                                           'owner': l['owner'],
+                                           }
+
         return other_locks
 
 

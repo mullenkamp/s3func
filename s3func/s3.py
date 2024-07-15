@@ -28,8 +28,8 @@ import datetime
 # from . import http_url
 # import http_url
 
-from . import utils
-# import utils
+# from . import utils
+import utils
 
 #######################################################
 ### Parameters
@@ -110,27 +110,42 @@ class S3Lock:
         """
         obj_lock_key = key + '.lock.'
         self._s3_session = s3_session
-        _ = self._list_objects(obj_lock_key)
+        objs = self._list_objects(obj_lock_key)
+
+        version_ids = {0: '', 1: ''}
+        timestamp = None
 
         if lock_id is None:
             self.lock_id = uuid.uuid4().hex[:13]
         else:
             self.lock_id = lock_id
+            if objs:
+                for obj in objs:
+                    key = obj['key']
+                    if lock_id in key:
+                        seq = int(key[-1])
+                        version_ids[seq] = obj['version_id']
+                        if seq == 1:
+                            timestamp = obj['upload_timestamp']
 
+        self._version_ids = version_ids
         self._obj_lock_key_len = len(obj_lock_key)
 
-        self._version_ids = {0: '', 1: ''}
-        self._timestamp = None
+        self._timestamp = timestamp
 
         self._obj_lock_key = obj_lock_key
         self._key = key
 
 
-    def _list_objects(self, obj_lock_key):
+    def _list_objects(self, obj_lock_key, lock_id=None):
         """
 
         """
-        objs = self._s3_session.list_object_versions(prefix=obj_lock_key)
+        if lock_id is not None:
+            key = obj_lock_key + lock_id
+        else:
+            key = obj_lock_key
+        objs = self._s3_session.list_object_versions(prefix=key)
         if objs.status in (401, 403):
             raise urllib3.exceptions.HTTPError(str(objs.error)[1:-1])
 
@@ -150,12 +165,12 @@ class S3Lock:
 
 
     @staticmethod
-    def _check_older_timestamp(timestamp_other, timestamp, obj_id, obj_id_other):
+    def _check_older_timestamp(timestamp_other, timestamp, lock_id, lock_id_other):
         """
 
         """
         if timestamp_other == timestamp:
-            if obj_id_other < obj_id:
+            if lock_id_other < lock_id:
                 return True
         if timestamp_other < timestamp:
             return True
@@ -168,15 +183,15 @@ class S3Lock:
 
         """
         res = {}
-        for obj_id_other, obj in objs.items():
+        for lock_id_other, obj in objs.items():
             if not all_locks:
                 if obj['lock_type'] == 'shared':
                     continue
             if 1 not in obj:
-                if self._check_older_timestamp(obj[0], self._timestamp, self.lock_id, obj_id_other):
-                    res[obj_id_other] = obj
-            elif self._check_older_timestamp(obj[1], self._timestamp, self.lock_id, obj_id_other):
-                res[obj_id_other] = obj
+                if self._check_older_timestamp(obj[0], self._timestamp, self.lock_id, lock_id_other):
+                    res[lock_id_other] = obj
+            elif self._check_older_timestamp(obj[1], self._timestamp, self.lock_id, lock_id_other):
+                res[lock_id_other] = obj
 
         return res
 
@@ -196,7 +211,7 @@ class S3Lock:
 
         """
         del_dict = [{'Key': self._obj_lock_key + f'{self.lock_id}-{seq}', 'VersionId': self._version_ids[seq]} for seq in (0, 1)]
-        _ = self._s3_session.delete_objects( del_dict)
+        _ = self._s3_session.delete_objects(del_dict)
         self._version_ids = {0: '', 1: ''}
         self._timestamp = None
 
@@ -233,12 +248,12 @@ class S3Lock:
 
         if objs:
             for l in objs:
-                obj_id, seq = l['key'][self._obj_lock_key_len:].split('-')
-                if obj_id != self.lock_id:
-                    if obj_id in other_locks:
-                        other_locks[obj_id].update({int(seq): l['upload_timestamp']})
+                lock_id, seq = l['key'][self._obj_lock_key_len:].split('-')
+                if lock_id != self.lock_id:
+                    if lock_id in other_locks:
+                        other_locks[lock_id].update({int(seq): l['upload_timestamp']})
                     else:
-                        other_locks[obj_id] = {int(seq): l['upload_timestamp'],
+                        other_locks[lock_id] = {int(seq): l['upload_timestamp'],
                                                'lock_type': l['lock_type'],
                                                }
         return other_locks
@@ -258,17 +273,18 @@ class S3Lock:
 
         if objs:
             for l in objs:
-                obj_id, seq = l['key'][self._obj_lock_key_len:].split('-')
-                other_locks[obj_id] = {'upload_timestamp': l['upload_timestamp'],
-                                       'lock_type': l['lock_type'],
-                                       'owner': l['owner'],
-                                       }
+                lock_id, seq = l['key'][self._obj_lock_key_len:].split('-')
+                if lock_id != self.lock_id:
+                    other_locks[lock_id] = {'upload_timestamp': l['upload_timestamp'],
+                                           'lock_type': l['lock_type'],
+                                           'owner': l['owner'],
+                                           }
         return other_locks
 
 
     def break_other_locks(self, timestamp: str | datetime.datetime=None):
         """
-        Removes all other locks that are on the object older than specified timestamp. This is only meant to be used in deadlock circumstances.
+        Removes all locks that are on the object older than specified timestamp. This is only meant to be used in deadlock circumstances.
 
         Parameters
         ----------
@@ -291,6 +307,8 @@ class S3Lock:
         keys = []
         if objs:
             for l in objs:
+                # lock_id, seq = l['key'][self._obj_lock_key_len:].split('-')
+                # if lock_id != self.lock_id:
                 if l['upload_timestamp'] < timestamp:
                     keys.append({'Key': l['key'], 'VersionId': l['version_id']})
 
@@ -301,7 +319,7 @@ class S3Lock:
 
     def locked(self):
         """
-        Checks to see if there's a lock on the object. This will return True is there is a shared or exclusive lock.
+        Checks to see if there's a lock on the object. This will return True if there is a shared or exclusive lock.
 
         Returns
         -------
