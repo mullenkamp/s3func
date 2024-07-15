@@ -107,7 +107,7 @@ def get_authorization(application_key_id, application_key, session):
     headers = urllib3.make_headers(basic_auth=f'{application_key_id}:{application_key}')
 
     response = session.request('get', auth_url, headers=headers)
-    resp = utils.HttpResponse(response)
+    resp = utils.HttpResponse(response, False)
 
     return resp
 
@@ -120,38 +120,69 @@ class B2Lock:
     """
 
     """
-    def __init__(self, b2_session, key: str):
+    def __init__(self, connection_config: dict, bucket: str, key: str, lock_id: str=None, **b2_session_kwargs):
         """
         This class contains a locking mechanism by utilizing B2 objects. It has implementations for both shared and exclusive (the default) locks. It follows the same locking API as python thread locks (https://docs.python.org/3/library/threading.html#lock-objects), but with some extra methods for managing "deadlocks". The required B2 permissions are ListObjects, WriteObjects, and DeleteObjects.
 
-        This initialized class can be used as a context manager exactly like the thread locks.
+        This initialized class can be used as a context manager exactly like the thread locks. It can also be pickled, which means it can be used in multiprocessing.
 
         Parameters
         ----------
+        connection_config : dict
+            A dictionary of the connection info necessary to establish an S3 connection. It should contain service_name (s3), endpoint_url, aws_access_key_id, and aws_secret_access_key. aws_access_key_id can also be access_key_id or application_key_id. aws_secret_access_key can also be secret_access_key or application_key.
+        bucket : str
+            The bucket to be used when performing S3 operations.
         key : str
             The base object key that will be given a lock. The extension ".lock" plus a unique object id will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten.
+        lock_id : str or None
+            The unique ID used for the lock object. None will create a new ID. Retaining the lock_id will allow the user to use the lock later.
+        b2_session_kwargs :
+            Other kwargs passed to B2Session.
         """
-        obj_lock_key = key + '.lock.'
-        self._b2_session = b2_session
-        _ = self._list_objects(obj_lock_key)
+        b2_session_kwargs['connection_config'] = connection_config
+        b2_session_kwargs['bucket'] = bucket
+        self._b2_session_kwargs = b2_session_kwargs
 
-        self._lock_id = uuid.uuid4().hex[:13]
+        session = B2Session(**b2_session_kwargs)
+
+        obj_lock_key = key + '.lock.'
+        objs = self._list_objects(session, obj_lock_key)
+
+        version_ids = {0: '', 1: ''}
+        timestamp = None
+
+        if lock_id is None:
+            self.lock_id = uuid.uuid4().hex[:13]
+        else:
+            self.lock_id = lock_id
+            if objs:
+                for obj in objs:
+                    key = obj['key']
+                    if lock_id in key:
+                        seq = int(key[-1])
+                        version_ids[seq] = obj['version_id']
+                        if seq == 1:
+                            timestamp = obj['last_modified']
+
+        self._version_ids = version_ids
         self._obj_lock_key_len = len(obj_lock_key)
 
-        self._version_ids = {0: '', 1: ''}
-        self._timestamp = None
+        self._timestamp = timestamp
 
-        # self._b2_client = b2_client
-        # self._bucket = bucket
         self._obj_lock_key = obj_lock_key
         self._key = key
 
 
-    def _list_objects(self, obj_lock_key):
+    @staticmethod
+    def _list_objects(session, obj_lock_key, lock_id=None):
         """
 
         """
-        objs = self._b2_session.list_object_versions(prefix=obj_lock_key)
+        if lock_id is not None:
+            key = obj_lock_key + lock_id
+        else:
+            key = obj_lock_key
+        objs = session.list_object_versions(prefix=key)
         if objs.status in (401, 403):
             raise urllib3.exceptions.HTTPError(str(objs.error)[1:-1])
 
@@ -171,12 +202,12 @@ class B2Lock:
 
 
     @staticmethod
-    def _check_older_timestamp(timestamp_other, timestamp, obj_id, obj_id_other):
+    def _check_older_timestamp(timestamp_other, timestamp, lock_id, lock_id_other):
         """
 
         """
         if timestamp_other == timestamp:
-            if obj_id_other < obj_id:
+            if lock_id_other < lock_id:
                 return True
         if timestamp_other < timestamp:
             return True
@@ -189,57 +220,57 @@ class B2Lock:
 
         """
         res = {}
-        for obj_id_other, obj in objs.items():
+        for lock_id_other, obj in objs.items():
             if not all_locks:
                 if obj['lock_type'] == 'shared':
                     continue
             if 1 not in obj:
-                if self._check_older_timestamp(obj[0], self._timestamp, self._lock_id, obj_id_other):
-                    res[obj_id_other] = obj
-            elif self._check_older_timestamp(obj[1], self._timestamp, self._lock_id, obj_id_other):
-                res[obj_id_other] = obj
+                if self._check_older_timestamp(obj[0], self._timestamp, self.lock_id, lock_id_other):
+                    res[lock_id_other] = obj
+            elif self._check_older_timestamp(obj[1], self._timestamp, self.lock_id, lock_id_other):
+                res[lock_id_other] = obj
 
         return res
 
 
-    def _delete_lock_object(self, seq):
+    def _delete_lock_object(self, session, seq):
         """
 
         """
-        obj_name = self._obj_lock_key + f'{self._lock_id}-{seq}'
-        _ = self._b2_session.delete_object(obj_name, self._version_ids[seq])
+        obj_name = self._obj_lock_key + f'{self.lock_id}-{seq}'
+        _ = session.delete_object(obj_name, self._version_ids[seq])
         self._version_ids[seq] = ''
         self._timestamp = None
 
 
-    def _delete_lock_objects(self):
+    def _delete_lock_objects(self, session):
         """
 
         """
         for seq in (0, 1):
-            self._delete_lock_object(seq)
+            self._delete_lock_object(session, seq)
 
 
-    def _put_lock_objects(self, body):
+    def _put_lock_objects(self, session, body):
         """
 
         """
         for seq in (0, 1):
-            obj_name = self._obj_lock_key + f'{self._lock_id}-{seq}'
+            obj_name = self._obj_lock_key + f'{self.lock_id}-{seq}'
             timestamp = datetime.datetime.now(datetime.timezone.utc)
-            resp = self._b2_session.put_object(obj_name, body, last_modified=timestamp)
+            resp = session.put_object(obj_name, body, last_modified=timestamp)
             if ('version_id' in resp.metadata) and (resp.status == 200):
                 self._version_ids[seq] = resp.metadata['version_id']
                 self._timestamp = timestamp
             else:
                 if seq == 1:
-                    self._delete_lock_objects()
+                    self._delete_lock_objects(session)
                 else:
-                    self._delete_lock_object(seq)
+                    self._delete_lock_object(session, seq)
                 raise urllib3.exceptions.HTTPError(str(resp.error)[1:-1])
 
 
-    def _other_locks_timestamps(self):
+    def _other_locks_timestamps(self, session):
         """
         Method to list all of the other locks' timestamps (and lock type).
 
@@ -247,18 +278,18 @@ class B2Lock:
         -------
         list of dict
         """
-        objs = self._list_objects(self._obj_lock_key)
+        objs = self._list_objects(session, self._obj_lock_key)
 
         other_locks = {}
 
         if objs:
             for l in objs:
-                obj_id, seq = l['key'][self._obj_lock_key_len:].split('-')
-                if obj_id != self._lock_id:
-                    if obj_id in other_locks:
-                        other_locks[obj_id].update({int(seq): l['last_modified']})
+                lock_id, seq = l['key'][self._obj_lock_key_len:].split('-')
+                if lock_id != self.lock_id:
+                    if lock_id in other_locks:
+                        other_locks[lock_id].update({int(seq): l['last_modified']})
                     else:
-                        other_locks[obj_id] = {int(seq): l['last_modified'],
+                        other_locks[lock_id] = {int(seq): l['last_modified'],
                                                'lock_type': l['lock_type'],
                                                }
         return other_locks
@@ -272,21 +303,24 @@ class B2Lock:
         -------
         dict
         """
-        objs = self._list_objects(self._obj_lock_key)
+        session = B2Session(**self._b2_session_kwargs)
+        objs = self._list_objects(session, self._obj_lock_key)
 
         other_locks = {}
 
         if objs:
             for l in objs:
-                obj_id, seq = l['key'][self._obj_lock_key_len:].split('-')
-                other_locks[obj_id] = {'last_modified': l['last_modified'],
-                                       'lock_type': l['lock_type'],
-                                       'owner': l['owner'],
-                                       }
+                lock_id, seq = l['key'][self._obj_lock_key_len:].split('-')
+                if lock_id != self.lock_id:
+                    other_locks[lock_id] = {'last_modified': l['last_modified'],
+                                           'lock_type': l['lock_type'],
+                                           'owner': l['owner'],
+                                           }
+
         return other_locks
 
 
-    def break_other_locks(self, timestamp: str | datetime.datetime=datetime.datetime.now(datetime.timezone.utc)):
+    def break_other_locks(self, timestamp: str | datetime.datetime=None):
         """
         Removes all other locks that are on the object older than specified timestamp. This is only meant to be used in deadlock circumstances.
 
@@ -299,17 +333,25 @@ class B2Lock:
         -------
         list of dict of the removed keys/versions
         """
-        if not isinstance(timestamp, datetime.datetime):
+        if timestamp is None:
+           timestamp = datetime.datetime.now(datetime.timezone.utc)
+        elif isinstance(timestamp, str):
             timestamp = datetime.datetime.fromisoformat(timestamp).astimezone(datetime.timezone.utc)
+        else:
+            raise TypeError('timestamp must be either an ISO datetime string or a datetime object.')
 
-        objs = self._list_objects(self._obj_lock_key)
+        session = B2Session(**self._b2_session_kwargs)
+        objs = self._list_objects(session, self._obj_lock_key)
 
         keys = []
         if objs:
             for l in objs:
                 if l['last_modified'] < timestamp:
-                    _ = self._b2_session.delete_object(l['key'], l['version_id'])
+                    _ = session.delete_object(l['key'], l['version_id'])
                     keys.append(l)
+
+        self._version_ids = {0: '', 1: ''}
+        self._timestamp = None
 
         return keys
 
@@ -322,7 +364,8 @@ class B2Lock:
         -------
         bool
         """
-        objs = self._list_objects(self._obj_lock_key)
+        session = B2Session(**self._b2_session_kwargs)
+        objs = self._list_objects(session, self._obj_lock_key)
         if objs:
             return True
         else:
@@ -348,12 +391,13 @@ class B2Lock:
         bool
         """
         if self._timestamp is None:
+            session = B2Session(**self._b2_session_kwargs)
             if exclusive:
                 body = b'1'
             else:
                 body = b'0'
-            self._put_lock_objects(body)
-            objs = self._other_locks_timestamps()
+            self._put_lock_objects(session, body)
+            objs = self._other_locks_timestamps(session)
             objs2 = self._check_for_older_objs(objs, exclusive)
 
             if objs2:
@@ -361,7 +405,7 @@ class B2Lock:
 
                 while blocking:
                     sleep(2)
-                    objs = self._other_locks_timestamps()
+                    objs = self._other_locks_timestamps(session)
                     objs2 = self._check_for_older_objs(objs, exclusive)
                     if len(objs2) == 0:
                         return True
@@ -372,7 +416,7 @@ class B2Lock:
                                 break
 
                 ## If the user makes it non-blocking or the timer runs out, the object version needs to be removed
-                self._delete_lock_objects()
+                self._delete_lock_objects(session)
 
                 return False
             else:
@@ -386,7 +430,8 @@ class B2Lock:
         Release the lock. It can only release the lock that was created via this instance. Returns nothing.
         """
         if self._timestamp is not None:
-            self._delete_lock_objects()
+            session = B2Session(**self._b2_session_kwargs)
+            self._delete_lock_objects(session)
 
     def __enter__(self):
         self.aquire()
@@ -402,7 +447,7 @@ class B2Session:
     """
 
     """
-    def __init__(self, connection_config: dict=None, bucket: str=None, max_pool_connections: int = 10, max_attempts: int=3, read_timeout: int=120, download_url: HttpUrl=None):
+    def __init__(self, connection_config: dict=None, bucket: str=None, max_pool_connections: int = 10, max_attempts: int=3, read_timeout: int=120, download_url: HttpUrl=None, stream=True):
         """
         Establishes an B2 client connection with a B2 account. If connection_config is None, then only get_object and head_object methods are available.
 
@@ -420,6 +465,8 @@ class B2Session:
             The read timeout in seconds.
         download_url : HttpUrl
             An alternative download_url when downloading data. If None, the download_url will be retrieved from the initial b2 request. It should NOT include the file/ at the end of the url.
+        stream : bool
+            Should the connection stay open for streaming or should all the data/content be loaded during the initial request.
         """
         b2_session = http_url.session(max_pool_connections, max_attempts, read_timeout)
 
@@ -430,7 +477,7 @@ class B2Session:
             if resp.status // 100 != 2:
                 raise urllib3.exceptions.HTTPError(f'{resp.error}')
 
-            data = orjson.loads(resp.stream.data)
+            data = orjson.loads(resp.data)
 
             storage_api = data['apiInfo']['storageApi']
             if 'bucketId' in storage_api:
@@ -460,7 +507,11 @@ class B2Session:
         self.bucket = bucket
         self.download_url = download_url
         self._upload_url_data = {}
-        # self._upload_auth_token = None
+        self._stream = stream
+        self._connection_config = connection_config
+        self._bucket = bucket
+        self._max_attempts = max_attempts
+        self._read_timeout = read_timeout
 
 
     def create_app_key(self, capabilities: List[str], key_name: str, duration: int=None, bucket_id: str=None, prefix: str=None):
@@ -493,7 +544,7 @@ class B2Session:
         url = urllib.parse.urljoin(self.api_url, '/b2api/v3/b2_create_key')
 
         resp = self._session.request('post', url, json=fields, headers=headers)
-        b2resp = utils.B2Response(resp)
+        b2resp = utils.B2Response(resp, self._stream)
 
         return b2resp
 
@@ -511,7 +562,7 @@ class B2Session:
         url += f'?accountId={self.account_id}'
 
         resp = self._session.request('get', url, headers=headers)
-        b2resp = utils.HttpResponse(resp)
+        b2resp = utils.B2Response(resp, self._stream)
 
         return b2resp
 
@@ -540,14 +591,13 @@ class B2Session:
         if isinstance(version_id, str):
             url = urllib.parse.urljoin(self.download_url, download_file_by_id_str)
             url += f'?fileId={version_id}'
-            resp = self._session.request('get', url, headers=headers, preload_content=False)
-            b2resp = utils.B2Response(resp)
         else:
             if key.startswith('/'):
                 key = key[1:]
             url = urllib.parse.urljoin(self.download_url, 'file/' + self.bucket + '/' + key)
-            resp = self._session.request('get', url, headers=headers, preload_content=False)
-            b2resp = utils.B2Response(resp)
+
+        resp = self._session.request('get', url, headers=headers, preload_content=not self._stream)
+        b2resp = utils.B2Response(resp, self._stream)
 
         return b2resp
 
@@ -576,14 +626,13 @@ class B2Session:
         if isinstance(version_id, str):
             url = urllib.parse.urljoin(self.download_url, download_file_by_id_str)
             url += f'?fileId={version_id}'
-            resp = self._session.request('head', url, headers=headers, preload_content=False)
-            b2resp = utils.B2Response(resp)
         else:
             if key.startswith('/'):
                 key = key[1:]
             url = urllib.parse.urljoin(self.download_url, 'file/' + self.bucket + '/' + key)
-            resp = self._session.request('head', url, headers=headers, preload_content=False)
-            b2resp = utils.B2Response(resp)
+
+        resp = self._session.request('head', url, headers=headers, preload_content=not self._stream)
+        b2resp = utils.B2Response(resp, self._stream)
 
         return b2resp
 
@@ -694,7 +743,7 @@ class B2Session:
             headers['Authorization'] = upload_url_data['auth_token']
             upload_url = upload_url_data['upload_url']
 
-        b2resp = utils.B2Response(resp)
+        b2resp = utils.B2Response(resp, self._stream)
         b2resp.metadata.update(utils.get_metadata_from_b2_put_object(resp))
 
         return b2resp
@@ -786,7 +835,7 @@ class B2Session:
 
         url = urllib.parse.urljoin(self.api_url, '/b2api/v3/b2_delete_file_version')
         resp = self._session.request('post', url, headers=headers, json=params)
-        b2resp = utils.B2Response(resp)
+        b2resp = utils.B2Response(resp, self._stream)
 
         return b2resp
 
@@ -918,9 +967,9 @@ class B2Session:
         Parameters
         ----------
         key : str
-            The base object key that will be given a lock. The extension ".lock" plus a unique object id will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten.
+            The base object key that will be given a lock. The extension ".lock" plus a unique lock id will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten.
         """
-        return B2Lock(self, key)
+        return B2Lock(self._connection_config, self._bucket, key, max_attempts=self._max_attempts, read_timeout=self._read_timeout)
 
 
 

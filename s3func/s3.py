@@ -93,38 +93,69 @@ class S3Lock:
     """
 
     """
-    def __init__(self, s3_session, key: str):
+    def __init__(self, connection_config: dict, bucket: str, key: str, lock_id: str=None, **s3_session_kwargs):
         """
         This class contains a locking mechanism by utilizing S3 objects. It has implementations for both shared and exclusive (the default) locks. It follows the same locking API as python thread locks (https://docs.python.org/3/library/threading.html#lock-objects), but with some extra methods for managing "deadlocks". The required S3 permissions are ListObjects, WriteObjects, and DeleteObjects.
 
-        This initialized class can be used as a context manager exactly like the thread locks.
+        This initialized class can be used as a context manager exactly like the thread locks. It can also be pickled, which means it can be used in multiprocessing.
 
         Parameters
         ----------
+        connection_config : dict
+            A dictionary of the connection info necessary to establish an S3 connection. It should contain service_name (s3), endpoint_url, aws_access_key_id, and aws_secret_access_key. aws_access_key_id can also be access_key_id or application_key_id. aws_secret_access_key can also be secret_access_key or application_key.
+        bucket : str
+            The bucket to be used when performing S3 operations.
         key : str
             The base object key that will be given a lock. The extension ".lock" plus a unique object id will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten.
+        lock_id : str or None
+            The unique ID used for the lock object. None will create a new ID. Retaining the lock_id will allow the user to use the lock later.
+        s3_session_kwargs :
+            Other kwargs passed to S3Session.
         """
-        obj_lock_key = key + '.lock.'
-        self._s3_session = s3_session
-        _ = self._list_objects(obj_lock_key)
+        s3_session_kwargs['connection_config'] = connection_config
+        s3_session_kwargs['bucket'] = bucket
+        self._s3_session_kwargs = s3_session_kwargs
 
-        self._lock_id = uuid.uuid4().hex[:13]
+        session = S3Session(**s3_session_kwargs)
+
+        obj_lock_key = key + '.lock.'
+        objs = self._list_objects(session, obj_lock_key)
+
+        version_ids = {0: '', 1: ''}
+        timestamp = None
+
+        if lock_id is None:
+            self.lock_id = uuid.uuid4().hex[:13]
+        else:
+            self.lock_id = lock_id
+            if objs:
+                for obj in objs:
+                    key = obj['key']
+                    if lock_id in key:
+                        seq = int(key[-1])
+                        version_ids[seq] = obj['version_id']
+                        if seq == 1:
+                            timestamp = obj['upload_timestamp']
+
+        self._version_ids = version_ids
         self._obj_lock_key_len = len(obj_lock_key)
 
-        self._version_ids = {0: '', 1: ''}
-        self._timestamp = None
+        self._timestamp = timestamp
 
-        # self._s3_client = s3_client
-        # self._bucket = bucket
         self._obj_lock_key = obj_lock_key
         self._key = key
 
 
-    def _list_objects(self, obj_lock_key):
+    @staticmethod
+    def _list_objects(session, obj_lock_key, lock_id=None):
         """
 
         """
-        objs = self._s3_session.list_object_versions(prefix=obj_lock_key)
+        if lock_id is not None:
+            key = obj_lock_key + lock_id
+        else:
+            key = obj_lock_key
+        objs = session.list_object_versions(prefix=key)
         if objs.status in (401, 403):
             raise urllib3.exceptions.HTTPError(str(objs.error)[1:-1])
 
@@ -144,12 +175,12 @@ class S3Lock:
 
 
     @staticmethod
-    def _check_older_timestamp(timestamp_other, timestamp, obj_id, obj_id_other):
+    def _check_older_timestamp(timestamp_other, timestamp, lock_id, lock_id_other):
         """
 
         """
         if timestamp_other == timestamp:
-            if obj_id_other < obj_id:
+            if lock_id_other < lock_id:
                 return True
         if timestamp_other < timestamp:
             return True
@@ -162,58 +193,58 @@ class S3Lock:
 
         """
         res = {}
-        for obj_id_other, obj in objs.items():
+        for lock_id_other, obj in objs.items():
             if not all_locks:
                 if obj['lock_type'] == 'shared':
                     continue
             if 1 not in obj:
-                if self._check_older_timestamp(obj[0], self._timestamp, self._lock_id, obj_id_other):
-                    res[obj_id_other] = obj
-            elif self._check_older_timestamp(obj[1], self._timestamp, self._lock_id, obj_id_other):
-                res[obj_id_other] = obj
+                if self._check_older_timestamp(obj[0], self._timestamp, self.lock_id, lock_id_other):
+                    res[lock_id_other] = obj
+            elif self._check_older_timestamp(obj[1], self._timestamp, self.lock_id, lock_id_other):
+                res[lock_id_other] = obj
 
         return res
 
 
-    def _delete_lock_object(self, seq):
+    def _delete_lock_object(self, session, seq):
         """
 
         """
-        obj_name = self._obj_lock_key + f'{self._lock_id}-{seq}'
-        _ = self._s3_session.delete_object(obj_name, self._version_ids[seq])
+        obj_name = self._obj_lock_key + f'{self.lock_id}-{seq}'
+        _ = session.delete_object(obj_name, self._version_ids[seq])
         self._version_ids[seq] = ''
         self._timestamp = None
 
 
-    def _delete_lock_objects(self):
+    def _delete_lock_objects(self, session):
         """
 
         """
-        del_dict = [{'Key': self._obj_lock_key + f'{self._lock_id}-{seq}', 'VersionId': self._version_ids[seq]} for seq in (0, 1)]
-        _ = self._s3_session.delete_objects( del_dict)
+        del_dict = [{'Key': self._obj_lock_key + f'{self.lock_id}-{seq}', 'VersionId': self._version_ids[seq]} for seq in (0, 1)]
+        _ = session.delete_objects(del_dict)
         self._version_ids = {0: '', 1: ''}
         self._timestamp = None
 
 
-    def _put_lock_objects(self, body):
+    def _put_lock_objects(self, session, body):
         """
 
         """
         for seq in (0, 1):
-            obj_name = self._obj_lock_key + f'{self._lock_id}-{seq}'
-            resp = self._s3_session.put_object(obj_name, body)
+            obj_name = self._obj_lock_key + f'{self.lock_id}-{seq}'
+            resp = session.put_object(obj_name, body)
             if ('version_id' in resp.metadata) and (resp.status == 200):
                 self._version_ids[seq] = resp.metadata['version_id']
                 self._timestamp = resp.metadata['upload_timestamp']
             else:
                 if seq == 1:
-                    self._delete_lock_objects()
+                    self._delete_lock_objects(session)
                 else:
-                    self._delete_lock_object(seq)
+                    self._delete_lock_object(session, seq)
                 raise urllib3.exceptions.HTTPError(str(resp.error)[1:-1])
 
 
-    def _other_locks_timestamps(self):
+    def _other_locks_timestamps(self, session):
         """
         Method to list all of the other locks' timestamps (and lock type).
 
@@ -221,18 +252,18 @@ class S3Lock:
         -------
         list of dict
         """
-        objs = self._list_objects(self._obj_lock_key)
+        objs = self._list_objects(session, self._obj_lock_key)
 
         other_locks = {}
 
         if objs:
             for l in objs:
-                obj_id, seq = l['key'][self._obj_lock_key_len:].split('-')
-                if obj_id != self._lock_id:
-                    if obj_id in other_locks:
-                        other_locks[obj_id].update({int(seq): l['upload_timestamp']})
+                lock_id, seq = l['key'][self._obj_lock_key_len:].split('-')
+                if lock_id != self.lock_id:
+                    if lock_id in other_locks:
+                        other_locks[lock_id].update({int(seq): l['upload_timestamp']})
                     else:
-                        other_locks[obj_id] = {int(seq): l['upload_timestamp'],
+                        other_locks[lock_id] = {int(seq): l['upload_timestamp'],
                                                'lock_type': l['lock_type'],
                                                }
         return other_locks
@@ -246,23 +277,25 @@ class S3Lock:
         -------
         dict
         """
-        objs = self._list_objects(self._obj_lock_key)
+        session = S3Session(**self._s3_session_kwargs)
+        objs = self._list_objects(session, self._obj_lock_key)
 
         other_locks = {}
 
         if objs:
             for l in objs:
-                obj_id, seq = l['key'][self._obj_lock_key_len:].split('-')
-                other_locks[obj_id] = {'upload_timestamp': l['upload_timestamp'],
-                                       'lock_type': l['lock_type'],
-                                       'owner': l['owner'],
-                                       }
+                lock_id, seq = l['key'][self._obj_lock_key_len:].split('-')
+                if lock_id != self.lock_id:
+                    other_locks[lock_id] = {'upload_timestamp': l['upload_timestamp'],
+                                           'lock_type': l['lock_type'],
+                                           'owner': l['owner'],
+                                           }
         return other_locks
 
 
-    def break_other_locks(self, timestamp: str | datetime.datetime=datetime.datetime.now(datetime.timezone.utc)):
+    def break_other_locks(self, timestamp: str | datetime.datetime=None):
         """
-        Removes all other locks that are on the object older than specified timestamp. This is only meant to be used in deadlock circumstances.
+        Removes all locks that are on the object older than specified timestamp. This is only meant to be used in deadlock circumstances.
 
         Parameters
         ----------
@@ -273,31 +306,42 @@ class S3Lock:
         -------
         list of dict of the removed keys/versions
         """
-        if not isinstance(timestamp, datetime.datetime):
+        if timestamp is None:
+           timestamp = datetime.datetime.now(datetime.timezone.utc)
+        elif isinstance(timestamp, str):
             timestamp = datetime.datetime.fromisoformat(timestamp).astimezone(datetime.timezone.utc)
+        else:
+            raise TypeError('timestamp must be either an ISO datetime string or a datetime object.')
 
-        objs = self._list_objects(self._obj_lock_key)
+        session = S3Session(**self._s3_session_kwargs)
+        objs = self._list_objects(session, self._obj_lock_key)
 
         keys = []
         if objs:
             for l in objs:
+                # lock_id, seq = l['key'][self._obj_lock_key_len:].split('-')
+                # if lock_id != self.lock_id:
                 if l['upload_timestamp'] < timestamp:
                     keys.append({'Key': l['key'], 'VersionId': l['version_id']})
 
-            self._s3_session.delete_objects(keys)
+            session.delete_objects(keys)
+
+        self._version_ids = {0: '', 1: ''}
+        self._timestamp = None
 
         return keys
 
 
     def locked(self):
         """
-        Checks to see if there's a lock on the object. This will return True is there is a shared or exclusive lock.
+        Checks to see if there's a lock on the object. This will return True if there is a shared or exclusive lock.
 
         Returns
         -------
         bool
         """
-        objs = self._list_objects(self._obj_lock_key)
+        session = S3Session(**self._s3_session_kwargs)
+        objs = self._list_objects(session, self._obj_lock_key)
         if objs:
             return True
         else:
@@ -323,12 +367,13 @@ class S3Lock:
         bool
         """
         if self._timestamp is None:
+            session = S3Session(**self._s3_session_kwargs)
             if exclusive:
                 body = b'1'
             else:
                 body = b'0'
-            self._put_lock_objects(body)
-            objs = self._other_locks_timestamps()
+            self._put_lock_objects(session, body)
+            objs = self._other_locks_timestamps(session)
             objs2 = self._check_for_older_objs(objs, exclusive)
 
             if objs2:
@@ -336,7 +381,7 @@ class S3Lock:
 
                 while blocking:
                     sleep(2)
-                    objs = self._other_locks_timestamps()
+                    objs = self._other_locks_timestamps(session)
                     objs2 = self._check_for_older_objs(objs, exclusive)
                     if len(objs2) == 0:
                         return True
@@ -347,7 +392,7 @@ class S3Lock:
                                 break
 
                 ## If the user makes it non-blocking or the timer runs out, the object version needs to be removed
-                self._delete_lock_objects()
+                self._delete_lock_objects(session)
 
                 return False
             else:
@@ -361,7 +406,8 @@ class S3Lock:
         Release the lock. It can only release the lock that was created via this instance. Returns nothing.
         """
         if self._timestamp is not None:
-            self._delete_lock_objects()
+            session = S3Session(**self._s3_session_kwargs)
+            self._delete_lock_objects(session)
 
     def __enter__(self):
         self.aquire()
@@ -377,7 +423,7 @@ class S3Session:
     """
 
     """
-    def __init__(self, connection_config: dict, bucket: str,  max_pool_connections: int = 10, max_attempts: int = 3, retry_mode: str='adaptive', read_timeout: int=120):
+    def __init__(self, connection_config: dict, bucket: str,  max_pool_connections: int = 10, max_attempts: int = 3, retry_mode: str='adaptive', read_timeout: int=120, stream=True):
         """
         Establishes an S3 client connection with an S3 account. This can use the legacy connect (signature_version s3) and the current version.
 
@@ -395,11 +441,19 @@ class S3Session:
             The retry mode passed to the "retries" option in the S3 config.
         read_timeout: int
             The read timeout in seconds passed to the "retries" option in the S3 config.
+        stream : bool
+            Should the connection stay open for streaming or should all the data/content be loaded during the initial request.
         """
         s3 = client(connection_config, max_pool_connections, max_attempts, retry_mode, read_timeout)
 
         self._client = s3
         self.bucket = bucket
+        self._stream = stream
+        self._connection_config = connection_config
+        self._bucket = bucket
+        self._max_attempts = max_attempts
+        self._retry_mode = retry_mode
+        self._read_timeout = read_timeout
         # self.buffer_size = buffer_size
 
 
@@ -427,7 +481,7 @@ class S3Session:
         ## Get the object
         params = utils.build_s3_params(self.bucket, key=key, version_id=version_id, range_start=range_start, range_end=range_end)
 
-        s3resp = utils.S3Response(self._client, 'get_object', **params)
+        s3resp = utils.S3Response(self._client, 'get_object', self._stream, **params)
 
         return s3resp
 
@@ -449,7 +503,7 @@ class S3Session:
         """
         params = utils.build_s3_params(self.bucket, key=key, version_id=version_id)
 
-        s3resp = utils.S3Response(self._client, 'head_object', **params)
+        s3resp = utils.S3Response(self._client, 'head_object', self._stream, **params)
 
         return s3resp
 
@@ -481,7 +535,7 @@ class S3Session:
         params = utils.build_s3_params(self.bucket, key=key, metadata=metadata, content_type=content_type, object_legal_hold=object_legal_hold)
         params['Body'] = obj
 
-        s3resp = utils.S3Response(self._client, 'put_object', **params)
+        s3resp = utils.S3Response(self._client, 'put_object', self._stream, **params)
         s3resp.metadata.update(metadata)
 
         return s3resp
@@ -555,7 +609,7 @@ class S3Session:
         """
         params = utils.build_s3_params(self.bucket, key=key, version_id=version_id)
 
-        s3resp = utils.S3Response(self._client, 'delete_object', **params)
+        s3resp = utils.S3Response(self._client, 'delete_object', self._stream, **params)
 
         return s3resp
 
@@ -606,7 +660,7 @@ class S3Session:
         """
         params = utils.build_s3_params(self.bucket, key=key, version_id=version_id)
 
-        s3resp = utils.S3Response(self._client, 'get_object_legal_hold', **params)
+        s3resp = utils.S3Response(self._client, 'get_object_legal_hold', self._stream, **params)
 
         return s3resp
 
@@ -636,7 +690,7 @@ class S3Session:
         params = utils.build_s3_params(self.bucket, key=key, version_id=version_id)
         params['LegalHold'] = hold
 
-        s3resp = utils.S3Response(self._client, 'put_object_legal_hold', **params)
+        s3resp = utils.S3Response(self._client, 'put_object_legal_hold', self._stream, **params)
 
         return s3resp
 
@@ -649,7 +703,7 @@ class S3Session:
         -------
         S3Reponse
         """
-        s3resp = utils.S3Response(self._client, 'get_object_lock_configuration', Bucket=self.bucket)
+        s3resp = utils.S3Response(self._client, 'get_object_lock_configuration', self._stream, Bucket=self.bucket)
 
         return s3resp
 
@@ -673,7 +727,7 @@ class S3Session:
             hold = {'ObjectLockEnabled': 'Disable'}
 
         # resp = s3.put_object_lock_configuration(Bucket=bucket, ObjectLockConfiguration=hold)
-        s3resp = utils.S3Response(self._client, 'put_object_lock_configuration', Bucket=self.bucket, ObjectLockConfiguration=hold)
+        s3resp = utils.S3Response(self._client, 'put_object_lock_configuration', self._stream, Bucket=self.bucket, ObjectLockConfiguration=hold)
 
         return s3resp
 
@@ -687,9 +741,9 @@ class S3Session:
         Parameters
         ----------
         key : str
-            The base object key that will be given a lock. The extension ".lock" plus a unique object id will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten.
+            The base object key that will be given a lock. The extension ".lock" plus a unique lock id will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten.
         """
-        return S3Lock(self, key)
+        return S3Lock(self._connection_config, self._bucket, key, max_attempts=self._max_attempts, retry_mode=self._retry_mode, read_timeout=self._read_timeout)
 
 
 

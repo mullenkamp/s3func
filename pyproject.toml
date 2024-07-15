@@ -53,7 +53,7 @@ dependencies = [
 ]
 
 [[tool.hatch.envs.all.matrix]]
-python = ['3.8', '3.9', '3.10']
+python = ['3.9', '3.10', '3.11']
 
 [tool.hatch.envs.lint]
 detached = true
@@ -182,4 +182,8 @@ Source = "https://github.com/mullenkamp/s3func"
 [tool.hatch.build.targets.sdist]
 include = [
     "/s3func",
+]
+exclude = [
+  '/s3func/tests/*.csv',
+  '/s3func/tests/*.blt'
 ]
