@@ -266,7 +266,7 @@ class S3Lock:
         return other_locks
 
 
-    def break_other_locks(self, timestamp: str | datetime.datetime=datetime.datetime.now(datetime.timezone.utc)):
+    def break_other_locks(self, timestamp: str | datetime.datetime=None):
         """
         Removes all other locks that are on the object older than specified timestamp. This is only meant to be used in deadlock circumstances.
 
@@ -279,8 +279,12 @@ class S3Lock:
         -------
         list of dict of the removed keys/versions
         """
-        if not isinstance(timestamp, datetime.datetime):
+        if timestamp is None:
+           timestamp = datetime.datetime.now(datetime.timezone.utc)
+        elif isinstance(timestamp, str):
             timestamp = datetime.datetime.fromisoformat(timestamp).astimezone(datetime.timezone.utc)
+        else:
+            raise TypeError('timestamp must be either an ISO datetime string or a datetime object.')
 
         objs = self._list_objects(self._obj_lock_key)
 
