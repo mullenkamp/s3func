@@ -97,7 +97,7 @@ class S3Lock:
         """
         This class contains a locking mechanism by utilizing S3 objects. It has implementations for both shared and exclusive (the default) locks. It follows the same locking API as python thread locks (https://docs.python.org/3/library/threading.html#lock-objects), but with some extra methods for managing "deadlocks". The required S3 permissions are ListObjects, WriteObjects, and DeleteObjects.
 
-        This initialized class can be used as a context manager exactly like the thread locks.
+        This initialized class can be used as a context manager exactly like the thread locks. It can also be pickled, which means it can be used in multiprocessing.
 
         Parameters
         ----------
@@ -449,6 +449,11 @@ class S3Session:
         self._client = s3
         self.bucket = bucket
         self._stream = stream
+        self._connection_config = connection_config
+        self._bucket = bucket
+        self._max_attempts = max_attempts
+        self._retry_mode = retry_mode
+        self._read_timeout = read_timeout
         # self.buffer_size = buffer_size
 
 
@@ -736,9 +741,9 @@ class S3Session:
         Parameters
         ----------
         key : str
-            The base object key that will be given a lock. The extension ".lock" plus a unique object id will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten.
+            The base object key that will be given a lock. The extension ".lock" plus a unique lock id will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten.
         """
-        return S3Lock(self, key)
+        return S3Lock(self._connection_config, self._bucket, key, max_attempts=self._max_attempts, retry_mode=self._retry_mode, read_timeout=self._read_timeout)
 
 
 

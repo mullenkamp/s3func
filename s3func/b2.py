@@ -124,7 +124,7 @@ class B2Lock:
         """
         This class contains a locking mechanism by utilizing B2 objects. It has implementations for both shared and exclusive (the default) locks. It follows the same locking API as python thread locks (https://docs.python.org/3/library/threading.html#lock-objects), but with some extra methods for managing "deadlocks". The required B2 permissions are ListObjects, WriteObjects, and DeleteObjects.
 
-        This initialized class can be used as a context manager exactly like the thread locks.
+        This initialized class can be used as a context manager exactly like the thread locks. It can also be pickled, which means it can be used in multiprocessing.
 
         Parameters
         ----------
@@ -508,7 +508,10 @@ class B2Session:
         self.download_url = download_url
         self._upload_url_data = {}
         self._stream = stream
-        # self._upload_auth_token = None
+        self._connection_config = connection_config
+        self._bucket = bucket
+        self._max_attempts = max_attempts
+        self._read_timeout = read_timeout
 
 
     def create_app_key(self, capabilities: List[str], key_name: str, duration: int=None, bucket_id: str=None, prefix: str=None):
@@ -964,9 +967,9 @@ class B2Session:
         Parameters
         ----------
         key : str
-            The base object key that will be given a lock. The extension ".lock" plus a unique object id will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten.
+            The base object key that will be given a lock. The extension ".lock" plus a unique lock id will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten.
         """
-        return B2Lock(self, key)
+        return B2Lock(self._connection_config, self._bucket, key, max_attempts=self._max_attempts, read_timeout=self._read_timeout)
 
 
 
