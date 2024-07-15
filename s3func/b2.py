@@ -396,7 +396,7 @@ class B2Lock:
                 body = b'1'
             else:
                 body = b'0'
-            self._put_lock_objects(body)
+            self._put_lock_objects(session, body)
             objs = self._other_locks_timestamps(session)
             objs2 = self._check_for_older_objs(objs, exclusive)
 
