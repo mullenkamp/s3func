@@ -24,6 +24,7 @@ import uuid
 from time import sleep
 from timeit import default_timer
 import datetime
+import weakref
 
 # from . import http_url
 # import http_url
@@ -85,6 +86,16 @@ def client(connection_config: dict, max_pool_connections: int = 10, max_attempts
     return s3
 
 
+def release_s3_lock(obj_lock_key, lock_id, version_ids, s3_session_kwargs):
+    """
+    Made for the creation of finalize objects to ensure that the lock is released if something goes wrong.
+    """
+    del_dict = [{'Key': obj_lock_key + f'{lock_id}-{seq}', 'VersionId': version_id} for seq, version_id in version_ids.items() if version_id is not None]
+    if del_dict:
+        session = S3Session(**s3_session_kwargs)
+        _ = session.delete_objects(del_dict)
+
+
 #######################################################
 ### Other classes
 
@@ -121,7 +132,7 @@ class S3Lock:
         obj_lock_key = key + '.lock.'
         objs = self._list_objects(session, obj_lock_key)
 
-        version_ids = {0: '', 1: ''}
+        version_ids = {0: None, 1: None}
         timestamp = None
 
         if lock_id is None:
@@ -206,24 +217,24 @@ class S3Lock:
         return res
 
 
-    def _delete_lock_object(self, session, seq):
-        """
+    # def _delete_lock_object(self, session, seq):
+    #     """
 
-        """
-        obj_name = self._obj_lock_key + f'{self.lock_id}-{seq}'
-        _ = session.delete_object(obj_name, self._version_ids[seq])
-        self._version_ids[seq] = ''
-        self._timestamp = None
+    #     """
+    #     obj_name = self._obj_lock_key + f'{self.lock_id}-{seq}'
+    #     _ = session.delete_object(obj_name, self._version_ids[seq])
+    #     self._version_ids[seq] = None
+    #     self._timestamp = None
 
 
-    def _delete_lock_objects(self, session):
-        """
+    # def _delete_lock_objects(self, session):
+    #     """
 
-        """
-        del_dict = [{'Key': self._obj_lock_key + f'{self.lock_id}-{seq}', 'VersionId': self._version_ids[seq]} for seq in (0, 1)]
-        _ = session.delete_objects(del_dict)
-        self._version_ids = {0: '', 1: ''}
-        self._timestamp = None
+    #     """
+    #     del_dict = [{'Key': self._obj_lock_key + f'{self.lock_id}-{seq}', 'VersionId': self._version_ids[seq]} for seq in (0, 1)]
+    #     _ = session.delete_objects(del_dict)
+    #     self._version_ids = {0: None, 1: None}
+    #     self._timestamp = None
 
 
     def _put_lock_objects(self, session, body):
@@ -237,11 +248,17 @@ class S3Lock:
                 self._version_ids[seq] = resp.metadata['version_id']
                 self._timestamp = resp.metadata['upload_timestamp']
             else:
-                if seq == 1:
-                    self._delete_lock_objects(session)
-                else:
-                    self._delete_lock_object(session, seq)
+                # if seq == 1:
+                #     self._delete_lock_objects(session)
+                # else:
+                #     self._delete_lock_object(session, seq)
+                release_s3_lock(self._obj_lock_key, self.lock_id, self._version_ids, self._s3_session_kwargs)
+                self._version_ids = {0: None, 1: None}
+                self._timestamp = None
                 raise urllib3.exceptions.HTTPError(str(resp.error)[1:-1])
+
+        ## Create finalizer object
+        self._finalizer = weakref.finalize(self, release_s3_lock, self._obj_lock_key, self.lock_id, self._version_ids, self._s3_session_kwargs)
 
 
     def _other_locks_timestamps(self, session):
@@ -326,7 +343,7 @@ class S3Lock:
 
             session.delete_objects(keys)
 
-        self._version_ids = {0: '', 1: ''}
+        self._version_ids = {0: None, 1: None}
         self._timestamp = None
 
         return keys
@@ -392,7 +409,9 @@ class S3Lock:
                                 break
 
                 ## If the user makes it non-blocking or the timer runs out, the object version needs to be removed
-                self._delete_lock_objects(session)
+                self._finalizer()
+                self._version_ids = {0: None, 1: None}
+                self._timestamp = None
 
                 return False
             else:
@@ -406,8 +425,9 @@ class S3Lock:
         Release the lock. It can only release the lock that was created via this instance. Returns nothing.
         """
         if self._timestamp is not None:
-            session = S3Session(**self._s3_session_kwargs)
-            self._delete_lock_objects(session)
+            self._finalizer()
+            self._version_ids = {0: None, 1: None}
+            self._timestamp = None
 
     def __enter__(self):
         self.aquire()

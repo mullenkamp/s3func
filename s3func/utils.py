@@ -569,7 +569,10 @@ class HttpResponse:
         metadata = add_metadata_from_urllib3(response)
 
         if (response.status // 100) != 2:
-            error = orjson.loads(response.data)
+            try:
+                error = orjson.loads(response.data)
+            except:
+                error = {'status': response.status, 'message': 'The response produced nonsense content.'}
         else:
             if stream_resp:
                 stream = response
@@ -604,7 +607,10 @@ class B2Response:
         metadata = add_metadata_from_urllib3(response)
 
         if (response.status // 100) != 2:
-            error = orjson.loads(response.data)
+            try:
+                error = orjson.loads(response.data)
+            except:
+                error = {'status': response.status, 'message': 'The response produced nonsense content.'}
         else:
             if stream_resp:
                 stream = response
@@ -678,7 +684,10 @@ class B2ListResponse:
             metadata['objects'] = objects
 
         if (resp.status // 100) != 2:
-            error = orjson.loads(resp.data)
+            try:
+                error = orjson.loads(resp.data)
+            except:
+                error = {'status': resp.status, 'message': 'The response produced nonsense content.'}
 
         self.headers = dict(resp.headers)
         self.metadata = metadata
