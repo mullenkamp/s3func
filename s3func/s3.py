@@ -253,8 +253,8 @@ class S3Lock:
                 # else:
                 #     self._delete_lock_object(session, seq)
                 release_s3_lock(self._obj_lock_key, self.lock_id, self._version_ids, self._s3_session_kwargs)
-                self._version_ids = {0: None, 1: None}
-                self._timestamp = None
+                # self._version_ids = {0: None, 1: None}
+                # self._timestamp = None
                 raise urllib3.exceptions.HTTPError(str(resp.error)[1:-1])
 
         ## Create finalizer object
