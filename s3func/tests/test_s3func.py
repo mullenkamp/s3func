@@ -38,10 +38,6 @@ except:
         'aws_secret_access_key': os.environ['aws_secret_access_key'],
         }
 
-# b2_conn_config = {'application_key_id': s3_conn_config['aws_access_key_id'],
-#                   'application_key': s3_conn_config['aws_secret_access_key']
-#                   }
-
 bucket = 'achelous'
 bucket_id = 'e063bcbc0d6523df74ed0e1d'
 flag = "w"
@@ -55,7 +51,6 @@ obj_key = uuid.uuid4().hex
 # obj_key = 'manual_test_key'
 base_url = 'https://b2.tethys-ts.xyz/file/' + bucket + '/'
 url = base_url +  obj_key
-version_id = '4_ze063bcbc0d6523df74ed0e1d_f101bf5d3b78267d4_d20240208_m090229_c002_v0001133_t0041_u01707382949632'
 
 # s3_client = s3.client(conn_config)
 s3_session = s3.S3Session(conn_config, bucket)

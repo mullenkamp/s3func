@@ -671,7 +671,7 @@ class B2Session:
         obj : bytes or io.BufferedIOBase
             The file object to be uploaded.
         metadata : dict or None
-            A dict of the metadata that should be saved along with the object.
+            A dict of the user metadata that should be saved along with the object.
         content_type : str
             The http content type to associate the object with.
         last_modified : datetime.datetime
@@ -716,12 +716,27 @@ class B2Session:
         else:
             headers['Content-Type'] = 'b2/x-auto'
 
+        ## User metadata - must be less than 2 kb
+        user_meta = {}
         if isinstance(last_modified, datetime.datetime):
-            headers['X-Bz-Info-src_last_modified_millis'] = int(last_modified.astimezone(datetime.timezone.utc).timestamp() * 1000)
+            user_meta['X-Bz-Info-src_last_modified_millis'] = str(int(last_modified.astimezone(datetime.timezone.utc).timestamp() * 1000))
 
         if metadata:
             for key, value in metadata.items():
-                headers['X-Bz-Info-' + key] = str(value)
+                if isinstance(key, str) and isinstance(value, str):
+                    user_meta['X-Bz-Info-' + key] = value
+                else:
+                    raise TypeError('metadata keys and values must be strings.')
+
+        # Check for size and add to headers
+        size = 0
+        for key, val in user_meta.items():
+            size += len(key.encode())
+            size += len(val.encode())
+            headers[key] = val
+
+        if size > 2048:
+            raise ValueError('metadata size is {size} bytes, but it must be under 2048 bytes.')
 
         # TODO : In python version 3.11, the file_digest function can input a file object
 

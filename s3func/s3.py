@@ -24,6 +24,7 @@ import uuid
 from time import sleep
 from timeit import default_timer
 import datetime
+import weakref
 
 # from . import http_url
 # import http_url
@@ -85,8 +86,26 @@ def client(connection_config: dict, max_pool_connections: int = 10, max_attempts
     return s3
 
 
+def release_s3_lock(obj_lock_key, lock_id, version_ids, s3_session_kwargs):
+    """
+    Made for the creation of finalize objects to ensure that the lock is released if something goes wrong.
+    """
+    del_dict = [{'Key': obj_lock_key + f'{lock_id}-{seq}', 'VersionId': version_id} for seq, version_id in version_ids.items() if version_id is not None]
+    if del_dict:
+        session = S3Session(**s3_session_kwargs)
+        _ = session.delete_objects(del_dict)
+
+
 #######################################################
 ### Other classes
+
+
+# class S3UserMetadata:
+#     """
+
+#     """
+#     def __init__(self,
+
 
 
 class S3Lock:
@@ -121,7 +140,7 @@ class S3Lock:
         obj_lock_key = key + '.lock.'
         objs = self._list_objects(session, obj_lock_key)
 
-        version_ids = {0: '', 1: ''}
+        version_ids = {0: None, 1: None}
         timestamp = None
 
         if lock_id is None:
@@ -206,24 +225,24 @@ class S3Lock:
         return res
 
 
-    def _delete_lock_object(self, session, seq):
-        """
+    # def _delete_lock_object(self, session, seq):
+    #     """
 
-        """
-        obj_name = self._obj_lock_key + f'{self.lock_id}-{seq}'
-        _ = session.delete_object(obj_name, self._version_ids[seq])
-        self._version_ids[seq] = ''
-        self._timestamp = None
+    #     """
+    #     obj_name = self._obj_lock_key + f'{self.lock_id}-{seq}'
+    #     _ = session.delete_object(obj_name, self._version_ids[seq])
+    #     self._version_ids[seq] = None
+    #     self._timestamp = None
 
 
-    def _delete_lock_objects(self, session):
-        """
+    # def _delete_lock_objects(self, session):
+    #     """
 
-        """
-        del_dict = [{'Key': self._obj_lock_key + f'{self.lock_id}-{seq}', 'VersionId': self._version_ids[seq]} for seq in (0, 1)]
-        _ = session.delete_objects(del_dict)
-        self._version_ids = {0: '', 1: ''}
-        self._timestamp = None
+    #     """
+    #     del_dict = [{'Key': self._obj_lock_key + f'{self.lock_id}-{seq}', 'VersionId': self._version_ids[seq]} for seq in (0, 1)]
+    #     _ = session.delete_objects(del_dict)
+    #     self._version_ids = {0: None, 1: None}
+    #     self._timestamp = None
 
 
     def _put_lock_objects(self, session, body):
@@ -237,11 +256,17 @@ class S3Lock:
                 self._version_ids[seq] = resp.metadata['version_id']
                 self._timestamp = resp.metadata['upload_timestamp']
             else:
-                if seq == 1:
-                    self._delete_lock_objects(session)
-                else:
-                    self._delete_lock_object(session, seq)
+                # if seq == 1:
+                #     self._delete_lock_objects(session)
+                # else:
+                #     self._delete_lock_object(session, seq)
+                release_s3_lock(self._obj_lock_key, self.lock_id, self._version_ids, self._s3_session_kwargs)
+                # self._version_ids = {0: None, 1: None}
+                # self._timestamp = None
                 raise urllib3.exceptions.HTTPError(str(resp.error)[1:-1])
+
+        ## Create finalizer object
+        self._finalizer = weakref.finalize(self, release_s3_lock, self._obj_lock_key, self.lock_id, self._version_ids, self._s3_session_kwargs)
 
 
     def _other_locks_timestamps(self, session):
@@ -326,7 +351,7 @@ class S3Lock:
 
             session.delete_objects(keys)
 
-        self._version_ids = {0: '', 1: ''}
+        self._version_ids = {0: None, 1: None}
         self._timestamp = None
 
         return keys
@@ -392,7 +417,9 @@ class S3Lock:
                                 break
 
                 ## If the user makes it non-blocking or the timer runs out, the object version needs to be removed
-                self._delete_lock_objects(session)
+                self._finalizer()
+                self._version_ids = {0: None, 1: None}
+                self._timestamp = None
 
                 return False
             else:
@@ -406,8 +433,9 @@ class S3Lock:
         Release the lock. It can only release the lock that was created via this instance. Returns nothing.
         """
         if self._timestamp is not None:
-            session = S3Session(**self._s3_session_kwargs)
-            self._delete_lock_objects(session)
+            self._finalizer()
+            self._version_ids = {0: None, 1: None}
+            self._timestamp = None
 
     def __enter__(self):
         self.aquire()
@@ -519,7 +547,7 @@ class S3Session:
         obj : bytes, io.BytesIO, or io.BufferedIOBase
             The file object to be uploaded.
         metadata : dict or None
-            A dict of the metadata that should be saved along with the object.
+            A dict of the user metadata that should be saved along with the object.
         content_type : str
             The http content type to associate the object with.
         object_legal_hold : bool
@@ -530,8 +558,22 @@ class S3Session:
         S3Response
         """
         # TODO : In python version 3.11, the file_digest function can input a file object
+
         if isinstance(obj, (bytes, bytearray)) and ('content-md5' not in metadata):
             metadata['content-md5'] = hashlib.md5(obj).hexdigest()
+
+        # Check for metadata size
+        size = 0
+        for meta_key, meta_val in metadata.items():
+            if isinstance(meta_key, str) and isinstance(meta_val, str):
+                size += len(meta_key.encode())
+                size += len(meta_val.encode())
+            else:
+                raise TypeError('metadata keys and values must be strings.')
+
+        if size > 2048:
+            raise ValueError('metadata size is {size} bytes, but it must be under 2048 bytes.')
+
         params = utils.build_s3_params(self.bucket, key=key, metadata=metadata, content_type=content_type, object_legal_hold=object_legal_hold)
         params['Body'] = obj
 

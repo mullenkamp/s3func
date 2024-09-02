@@ -273,14 +273,6 @@ def add_metadata_from_urllib3(response):
     """
     headers = response.headers
     metadata = {'status': response.status}
-    # if 'Content-Length' in headers:
-    #     metadata['content_length'] = int(headers['Content-Length'])
-    # if 'x-bz-file-id' in headers:
-    #     metadata['version_id'] = headers['x-bz-file-id']
-    # if 'X-Bz-Upload-Timestamp' in headers:
-    #     metadata['last_modified'] = datetime.datetime.fromtimestamp(int(headers['X-Bz-Upload-Timestamp']) * 0.001, datetime.timezone.utc)
-    # elif 'x-bz-file-id' in headers:
-    #     metadata['last_modified'] = datetime.datetime.fromtimestamp(int(headers['x-bz-file-id'].split('_u')[1]) * 0.001, datetime.timezone.utc)
 
     for key, value in headers.items():
         if key == 'Content-Length':
@@ -295,6 +287,9 @@ def add_metadata_from_urllib3(response):
             metadata['upload_timestamp'] = datetime.datetime.fromtimestamp(int(value) * 0.001, datetime.timezone.utc)
         elif 'x-bz-info-' in key:
             new_key = key.split('x-bz-info-')[1]
+            metadata[new_key] = value
+        elif 'x-amz-meta-' in key:
+            new_key = key.split('x-amz-meta-')[1]
             metadata[new_key] = value
 
     return metadata
@@ -569,7 +564,10 @@ class HttpResponse:
         metadata = add_metadata_from_urllib3(response)
 
         if (response.status // 100) != 2:
-            error = orjson.loads(response.data)
+            try:
+                error = orjson.loads(response.data)
+            except:
+                error = {'status': response.status, 'message': 'The response produced nonsense content.'}
         else:
             if stream_resp:
                 stream = response
@@ -604,7 +602,10 @@ class B2Response:
         metadata = add_metadata_from_urllib3(response)
 
         if (response.status // 100) != 2:
-            error = orjson.loads(response.data)
+            try:
+                error = orjson.loads(response.data)
+            except:
+                error = {'status': response.status, 'message': 'The response produced nonsense content.'}
         else:
             if stream_resp:
                 stream = response
@@ -678,7 +679,10 @@ class B2ListResponse:
             metadata['objects'] = objects
 
         if (resp.status // 100) != 2:
-            error = orjson.loads(resp.data)
+            try:
+                error = orjson.loads(resp.data)
+            except:
+                error = {'status': resp.status, 'message': 'The response produced nonsense content.'}
 
         self.headers = dict(resp.headers)
         self.metadata = metadata
