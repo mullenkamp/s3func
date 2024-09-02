@@ -100,6 +100,14 @@ def release_s3_lock(obj_lock_key, lock_id, version_ids, s3_session_kwargs):
 ### Other classes
 
 
+# class S3UserMetadata:
+#     """
+
+#     """
+#     def __init__(self,
+
+
+
 class S3Lock:
     """
 
@@ -539,7 +547,7 @@ class S3Session:
         obj : bytes, io.BytesIO, or io.BufferedIOBase
             The file object to be uploaded.
         metadata : dict or None
-            A dict of the metadata that should be saved along with the object.
+            A dict of the user metadata that should be saved along with the object.
         content_type : str
             The http content type to associate the object with.
         object_legal_hold : bool
@@ -550,8 +558,22 @@ class S3Session:
         S3Response
         """
         # TODO : In python version 3.11, the file_digest function can input a file object
+
         if isinstance(obj, (bytes, bytearray)) and ('content-md5' not in metadata):
             metadata['content-md5'] = hashlib.md5(obj).hexdigest()
+
+        # Check for metadata size
+        size = 0
+        for key, val in metadata.items():
+            if isinstance(key, str) and isinstance(val, str):
+                size += len(key.encode())
+                size += len(val.encode())
+            else:
+                raise TypeError('metadata keys and values must be strings.')
+
+        if size > 2048:
+            raise ValueError('metadata size is {size} bytes, but it must be under 2048 bytes.')
+
         params = utils.build_s3_params(self.bucket, key=key, metadata=metadata, content_type=content_type, object_legal_hold=object_legal_hold)
         params['Body'] = obj
 
