@@ -564,10 +564,10 @@ class S3Session:
 
         # Check for metadata size
         size = 0
-        for key, val in metadata.items():
-            if isinstance(key, str) and isinstance(val, str):
-                size += len(key.encode())
-                size += len(val.encode())
+        for meta_key, meta_val in metadata.items():
+            if isinstance(meta_key, str) and isinstance(meta_val, str):
+                size += len(meta_key.encode())
+                size += len(meta_val.encode())
             else:
                 raise TypeError('metadata keys and values must be strings.')
 

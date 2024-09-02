@@ -38,10 +38,6 @@ except:
         'aws_secret_access_key': os.environ['aws_secret_access_key'],
         }
 
-# b2_conn_config = {'application_key_id': s3_conn_config['aws_access_key_id'],
-#                   'application_key': s3_conn_config['aws_secret_access_key']
-#                   }
-
 bucket = 'achelous'
 bucket_id = 'e063bcbc0d6523df74ed0e1d'
 flag = "w"
