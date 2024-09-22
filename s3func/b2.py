@@ -186,17 +186,15 @@ class B2Lock:
         if objs.status in (401, 403):
             raise urllib3.exceptions.HTTPError(str(objs.error)[1:-1])
 
-        meta = objs.metadata
         res = []
-        if 'objects' in meta:
-            for l in meta['objects']:
-                if l['content_md5'] == md5_locks['exclusive']:
-                    l['lock_type'] = 'exclusive'
-                elif l['content_md5'] == md5_locks['shared']:
-                    l['lock_type'] = 'shared'
-                else:
-                    raise ValueError('This lock file was created by something else...')
-                res.append(l)
+        for l in objs.iter_objects():
+            if l['content_md5'] == md5_locks['exclusive']:
+                l['lock_type'] = 'exclusive'
+            elif l['content_md5'] == md5_locks['shared']:
+                l['lock_type'] = 'shared'
+            else:
+                raise ValueError('This lock file was created by something else...')
+            res.append(l)
 
         return res
 

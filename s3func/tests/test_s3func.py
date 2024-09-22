@@ -175,7 +175,7 @@ def test_s3_list_objects():
     count = 0
     found_key = False
     resp = s3_session.list_objects()
-    for i, js in enumerate(resp.metadata['objects']):
+    for i, js in enumerate(resp.iter_objects()):
         count += 1
         if js['key'] == obj_key:
             found_key = True
@@ -190,7 +190,7 @@ def test_s3_list_object_versions():
     count = 0
     found_key = False
     resp = s3_session.list_object_versions()
-    for i, js in enumerate(resp.metadata['objects']):
+    for i, js in enumerate(resp.iter_objects()):
         count += 1
         if js['key'] == obj_key:
             found_key = True
@@ -291,7 +291,7 @@ def test_s3_delete_objects():
     """
     obj_keys = []
     resp = s3_session.list_object_versions()
-    for js in resp.metadata['objects']:
+    for js in resp.iter_objects():
         if js['key'] == obj_key:
             obj_keys.append({'key': js['key'], 'version_id': js['version_id']})
 
@@ -299,7 +299,7 @@ def test_s3_delete_objects():
 
     found_key = False
     resp = s3_session.list_object_versions()
-    for i, js in enumerate(resp.metadata['objects']):
+    for i, js in enumerate(resp.iter_objects()):
         if js['key'] == obj_key:
             found_key = True
 
@@ -393,7 +393,7 @@ def test_b2_list_objects():
     count = 0
     found_key = False
     resp = b2_session.list_objects()
-    for i, js in enumerate(resp.metadata['objects']):
+    for i, js in enumerate(resp.iter_objects()):
         count += 1
         if js['key'] == obj_key:
             found_key = True
@@ -408,7 +408,7 @@ def test_b2_list_object_versions():
     count = 0
     found_key = False
     resp = b2_session.list_object_versions()
-    for i, js in enumerate(resp.metadata['objects']):
+    for i, js in enumerate(resp.iter_objects()):
         count += 1
         if js['key'] == obj_key:
             found_key = True
@@ -444,7 +444,7 @@ def test_b2_delete_objects():
     """
     # obj_keys = []
     resp = b2_session.list_object_versions()
-    for js in resp.metadata['objects']:
+    for js in resp.iter_objects():
         if js['key'] == obj_key:
             # obj_keys.append({'key': js['key'], 'version_id': js['version_id']})
 
@@ -452,7 +452,7 @@ def test_b2_delete_objects():
 
     found_key = False
     resp = b2_session.list_object_versions()
-    for i, js in enumerate(resp.metadata['objects']):
+    for i, js in enumerate(resp.iter_objects()):
         if js['key'] == obj_key:
             found_key = True
 
