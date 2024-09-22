@@ -10,8 +10,6 @@ from typing import List, Union
 # import requests
 import urllib.parse
 from urllib3.util import Retry, Timeout
-# from requests import Session
-# from requests.adapters import HTTPAdapter
 import urllib3
 
 from . import utils

@@ -16,6 +16,7 @@ from typing import Optional
 from pydantic import BaseModel, HttpUrl
 from urllib3.util import Retry, Timeout
 import datetime
+import copy
 
 #######################################################
 ### Parameters
@@ -414,6 +415,54 @@ def get_metadata_from_b2_put_object(response):
 #         return super().send(request, **kwargs)
 
 
+def iter_s3_list(func, **kwargs):
+    """
+
+    """
+    while True:
+        resp = func(**kwargs)
+
+        if 'Versions' in resp:
+            for js in resp['Versions']:
+                yield {
+                    'etag': js['ETag'].strip('"'),
+                    'content_length': js['Size'],
+                    'key': js['Key'],
+                    'version_id': js['VersionId'],
+                    'is_latest': js['IsLatest'],
+                    'upload_timestamp': js['LastModified'],
+                    'owner': js['Owner']['ID'],
+                    }
+            # if 'DeleteMarkers' in resp:
+            #     for js in resp['DeleteMarkers']:
+            #         del_markers.append({
+            #             'key': js['Key'],
+            #             'version_id': js['VersionId'],
+            #             'is_latest': js['IsLatest'],
+            #             'upload_timestamp': js['LastModified'],
+            #             'owner': js['Owner']['ID'],
+            #             })
+            if 'NextKeyMarker' in resp:
+                kwargs['KeyMarker'] = resp['NextKeyMarker']
+            else:
+                break
+
+        elif 'Contents' in resp:
+            for js in resp['Contents']:
+                yield {
+                    'etag': js['ETag'].strip('"'),
+                    'content_length': js['Size'],
+                    'key': js['Key'],
+                    'upload_timestamp': js['LastModified'],
+                    }
+            if 'NextContinuationToken' in resp:
+                kwargs['ContinuationToken'] = resp['NextContinuationToken']
+            else:
+                break
+        else:
+            break
+
+
 class S3ListResponse:
     """
 
@@ -426,73 +475,98 @@ class S3ListResponse:
 
         func = getattr(s3_client, method)
 
+        if 'MaxKeys' in kwargs:
+            max_keys = kwargs['MaxKeys']
+        else:
+            max_keys = 1000
+
+        kwargs['MaxKeys'] = 1
+
         try:
             resp = func(**kwargs)
             status = resp['ResponseMetadata']['HTTPStatusCode']
 
-            objects = []
-            del_markers = []
-            while True:
-                if 'Versions' in resp:
-                    for js in resp['Versions']:
-                        objects.append({
-                            'etag': js['ETag'].strip('"'),
-                            'content_length': js['Size'],
-                            'key': js['Key'],
-                            'version_id': js['VersionId'],
-                            'is_latest': js['IsLatest'],
-                            'upload_timestamp': js['LastModified'],
-                            'owner': js['Owner']['ID'],
-                            })
-                    if 'DeleteMarkers' in resp:
-                        for js in resp['DeleteMarkers']:
-                            del_markers.append({
-                                'key': js['Key'],
-                                'version_id': js['VersionId'],
-                                'is_latest': js['IsLatest'],
-                                'upload_timestamp': js['LastModified'],
-                                'owner': js['Owner']['ID'],
-                                })
-                    if 'NextKeyMarker' in resp:
-                        kwargs['KeyMarker'] = resp['NextKeyMarker']
-                    else:
-                        break
+            # objects = []
+            # del_markers = []
+            # while True:
+            #     if 'Versions' in resp:
+            #         for js in resp['Versions']:
+            #             objects.append({
+            #                 'etag': js['ETag'].strip('"'),
+            #                 'content_length': js['Size'],
+            #                 'key': js['Key'],
+            #                 'version_id': js['VersionId'],
+            #                 'is_latest': js['IsLatest'],
+            #                 'upload_timestamp': js['LastModified'],
+            #                 'owner': js['Owner']['ID'],
+            #                 })
+            #         if 'DeleteMarkers' in resp:
+            #             for js in resp['DeleteMarkers']:
+            #                 del_markers.append({
+            #                     'key': js['Key'],
+            #                     'version_id': js['VersionId'],
+            #                     'is_latest': js['IsLatest'],
+            #                     'upload_timestamp': js['LastModified'],
+            #                     'owner': js['Owner']['ID'],
+            #                     })
+            #         if 'NextKeyMarker' in resp:
+            #             kwargs['KeyMarker'] = resp['NextKeyMarker']
+            #         else:
+            #             break
 
-                elif 'Contents' in resp:
-                    for js in resp['Contents']:
-                        objects.append({
-                            'etag': js['ETag'].strip('"'),
-                            'content_length': js['Size'],
-                            'key': js['Key'],
-                            'upload_timestamp': js['LastModified'],
-                            })
-                    if 'NextContinuationToken' in resp:
-                        kwargs['ContinuationToken'] = resp['NextContinuationToken']
-                    else:
-                        break
-                else:
-                    break
+            #     elif 'Contents' in resp:
+            #         for js in resp['Contents']:
+            #             objects.append({
+            #                 'etag': js['ETag'].strip('"'),
+            #                 'content_length': js['Size'],
+            #                 'key': js['Key'],
+            #                 'upload_timestamp': js['LastModified'],
+            #                 })
+            #         if 'NextContinuationToken' in resp:
+            #             kwargs['ContinuationToken'] = resp['NextContinuationToken']
+            #         else:
+            #             break
+            #     else:
+            #         break
 
-                resp = func(**kwargs)
+            #     resp = func(**kwargs)
 
-            metadata = {'status': status}
-            if objects:
-                metadata['objects'] = objects
-            if del_markers:
-                metadata['delete_markers'] = del_markers
+
+            # if objects:
+            #     metadata['objects'] = objects
+            # if del_markers:
+            #     metadata['delete_markers'] = del_markers
 
         except s3_client.exceptions.ClientError as err:
             resp = err.response.copy()
             status = resp['ResponseMetadata']['HTTPStatusCode']
-            metadata = {'status': status}
             error = {'status': status}
             error.update({key.lower(): val for key, val in resp['Error'].items()})
 
         self.headers = {'ResponseMetadata': resp['ResponseMetadata']}
-        self.metadata = metadata
+        self.metadata = {'status': status}
         self.stream = None
         self.error = error
         self.status = status
+
+        kwargs['MaxKeys'] = max_keys
+        self._kwargs = kwargs
+        self._s3_client = s3_client
+        self._method = method
+
+
+    # @property
+    def iter_objects(self):
+        """
+
+        """
+        if self.error:
+            raise self._s3_client.exceptions.ClientError(self.error)
+        else:
+            func = getattr(self._s3_client, self._method)
+
+            return iter_s3_list(func, **copy.deepcopy(self._kwargs))
+
 
     def __repr__(self):
         """
@@ -626,6 +700,49 @@ class B2Response:
         return f'status: {self.status}'
 
 
+
+def iter_b2_list(session, url, headers, params):
+    """
+
+    """
+    while True:
+        resp = session.request('get', url, headers=headers, fields=params)
+        data = orjson.loads(resp.data)
+
+        if 'files' in data:
+            for js in data['files']:
+                if 'unverified:' in js['contentSha1']:
+                    js['contentSha1'] = js['contentSha1'].split('unverified:')[1]
+                dict1 = {
+                    'action': js['action'],
+                    'content_length': js['contentLength'],
+                    'content_md5': js['contentMd5'],
+                    'content_sha1': js['contentSha1'],
+                    'content_type': js['contentType'],
+                    'key': js['fileName'],
+                    'version_id': js['fileId'],
+                    'upload_timestamp': datetime.datetime.fromtimestamp(js['uploadTimestamp']*0.001, datetime.timezone.utc),
+                    'owner': js['accountId'],
+                    }
+                if 'fileInfo' in js:
+                    for fi, val in js['fileInfo'].items():
+                        if fi == 'src_last_modified_millis':
+                            dict1['last_modified'] = datetime.datetime.fromtimestamp(int(val)*0.001, datetime.timezone.utc)
+                        else:
+                            dict1[fi] = val
+
+                yield dict1
+
+            if data['nextFileName'] is None:
+                break
+            else:
+                params['startFileName'] = data['nextFileName']
+                if 'nextFileId' in data:
+                    params['startFileId'] = data['nextFileId']
+        else:
+            break
+
+
 class B2ListResponse:
     """
 
@@ -636,47 +753,56 @@ class B2ListResponse:
         """
         url = urllib.parse.urljoin(api_url, request)
 
-        objects = []
-        while True:
-            resp = session.request('get', url, headers=headers, fields=params)
-            data = orjson.loads(resp.data)
+        if 'maxFileCount' in params:
+            max_keys = params['maxFileCount']
+        else:
+            max_keys = 10000
 
-            if 'files' in data:
-                for js in data['files']:
-                    if 'unverified:' in js['contentSha1']:
-                        js['contentSha1'] = js['contentSha1'].split('unverified:')[1]
-                    dict1 = {
-                        'action': js['action'],
-                        'content_length': js['contentLength'],
-                        'content_md5': js['contentMd5'],
-                        'content_sha1': js['contentSha1'],
-                        'content_type': js['contentType'],
-                        'key': js['fileName'],
-                        'version_id': js['fileId'],
-                        'upload_timestamp': datetime.datetime.fromtimestamp(js['uploadTimestamp']*0.001, datetime.timezone.utc),
-                        'owner': js['accountId'],
-                        }
-                    if 'fileInfo' in js:
-                        for fi, val in js['fileInfo'].items():
-                            if fi == 'src_last_modified_millis':
-                                dict1['last_modified'] = datetime.datetime.fromtimestamp(int(val)*0.001, datetime.timezone.utc)
-                            else:
-                                dict1[fi] = val
-                    objects.append(dict1)
+        params['maxFileCount'] = 1
 
-                if data['nextFileName'] is None:
-                    break
-                else:
-                    params['startFileName'] = data['nextFileName']
-                    if 'nextFileId' in data:
-                        params['startFileId'] = data['nextFileId']
-            else:
-                break
+        resp = session.request('get', url, headers=headers, fields=params)
+
+        # objects = []
+        # while True:
+        #     resp = session.request('get', url, headers=headers, fields=params)
+        #     data = orjson.loads(resp.data)
+
+        #     if 'files' in data:
+        #         for js in data['files']:
+        #             if 'unverified:' in js['contentSha1']:
+        #                 js['contentSha1'] = js['contentSha1'].split('unverified:')[1]
+        #             dict1 = {
+        #                 'action': js['action'],
+        #                 'content_length': js['contentLength'],
+        #                 'content_md5': js['contentMd5'],
+        #                 'content_sha1': js['contentSha1'],
+        #                 'content_type': js['contentType'],
+        #                 'key': js['fileName'],
+        #                 'version_id': js['fileId'],
+        #                 'upload_timestamp': datetime.datetime.fromtimestamp(js['uploadTimestamp']*0.001, datetime.timezone.utc),
+        #                 'owner': js['accountId'],
+        #                 }
+        #             if 'fileInfo' in js:
+        #                 for fi, val in js['fileInfo'].items():
+        #                     if fi == 'src_last_modified_millis':
+        #                         dict1['last_modified'] = datetime.datetime.fromtimestamp(int(val)*0.001, datetime.timezone.utc)
+        #                     else:
+        #                         dict1[fi] = val
+        #             objects.append(dict1)
+
+        #         if data['nextFileName'] is None:
+        #             break
+        #         else:
+        #             params['startFileName'] = data['nextFileName']
+        #             if 'nextFileId' in data:
+        #                 params['startFileId'] = data['nextFileId']
+        #     else:
+        #         break
 
         error = {}
         metadata = add_metadata_from_urllib3(resp)
-        if objects:
-            metadata['objects'] = objects
+        # if objects:
+        #     metadata['objects'] = objects
 
         if (resp.status // 100) != 2:
             try:
@@ -689,6 +815,24 @@ class B2ListResponse:
         self.stream = None
         self.error = error
         self.status = resp.status
+        self._url = url
+        self._session = session
+        self._req_headers = headers
+
+        params['maxFileCount'] = max_keys
+        self._req_params = params
+
+
+    # @property
+    def iter_objects(self):
+        """
+
+        """
+        if self.error:
+            raise urllib3.exceptions.HTTPError(self.error)
+        else:
+            return iter_b2_list(self._session, self._url, self._req_headers, copy.deepcopy(self._req_params))
+
 
     def __repr__(self):
         """
