@@ -5,7 +5,6 @@ Created on May 13 08:04:38 2024
 
 @author: mike
 """
-from pydantic import HttpUrl
 from typing import List, Union
 # import requests
 import urllib.parse
@@ -51,7 +50,7 @@ def session(max_pool_connections: int = 10, max_attempts: int=3, timeout: int=12
     return http
 
 
-def join_url_key(key: str, base_url: HttpUrl):
+def join_url_key(key: str, base_url: str):
     """
 
     """
@@ -93,7 +92,7 @@ class HttpSession:
         # self.buffer_size = buffer_size
 
 
-    def get_object(self, url: HttpUrl, range_start: int=None, range_end: int=None):
+    def get_object(self, url: str, range_start: int=None, range_end: int=None):
         """
         Use a GET request to download the body and headers of a url.
 
@@ -114,13 +113,16 @@ class HttpSession:
         """
         headers = utils.build_url_headers(range_start=range_start, range_end=range_end)
 
+        if not utils.is_url(url):
+            raise TypeError(f'{url} is not a proper http url.')
+
         response = self._session.request('get', url, headers=headers, preload_content=not self._stream)
         resp = utils.HttpResponse(response, self._stream)
 
         return resp
 
 
-    def head_object(self, url: HttpUrl):
+    def head_object(self, url: str):
         """
         Use a HEAD request to download the headers of a url.
 
@@ -133,6 +135,9 @@ class HttpSession:
         -------
         HttpResponse
         """
+        if not utils.is_url(url):
+            raise TypeError(f'{url} is not a proper http url.')
+
         response = self._session.request('head', url)
         resp = utils.HttpResponse(response, self._stream)
 

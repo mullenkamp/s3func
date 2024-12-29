@@ -1,3 +1,7 @@
+[build-system]
+requires = ["hatchling>=1.26.1"]
+build-backend = "hatchling.build"
+
 [project]
 name = "s3func"
 authors = [
@@ -13,8 +17,17 @@ requires-python = ">=3.9"
 dependencies = ['boto3',
                 'urllib3>=2',
                 # 'b2sdk>=2',
-                'pydantic',
                 'orjson'
+]
+
+[dependency-groups]
+dev = [
+  "spyder-kernels==2.5",
+  "black",
+  "mypy",
+  "ruff",
+  "pytest",
+  "pytest-cov",
 ]
 
 # [tool.ruff]
@@ -41,7 +54,7 @@ allow-direct-references = true
 [tool.hatch.envs.default]
 python = "3.10"
 dependencies = [
-    "spyder-kernels==2.4",
+    "spyder-kernels==2.5",
     "black",
     "mypy",
     "ruff",
@@ -170,10 +183,6 @@ exclude_lines = [
   "if __name__ == .__main__.:",
   "if TYPE_CHECKING:",
 ]
-
-[build-system]
-requires = ["hatchling", "hatch-regex-commit"]
-build-backend = "hatchling.build"
 
 [project.urls]
 Documentation = "https://mullenkamp.github.io/s3func/"
