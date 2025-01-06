@@ -559,7 +559,7 @@ class S3Session:
         obj : bytes, io.BytesIO, or io.BufferedIOBase
             The file object to be uploaded.
         metadata : dict or None
-            A dict of the user metadata that should be saved along with the object.
+            A dict of the user metadata that should be saved along with the object. Keys and values must be strings. User-metadata must be under 2048 bytes of string encoded data.
         content_type : str
             The http content type to associate the object with.
         object_legal_hold : bool
