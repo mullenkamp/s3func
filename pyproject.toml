@@ -30,14 +30,6 @@ dev = [
   "pytest-cov",
 ]
 
-# [tool.ruff]
-# target-version = "py310"
-# extend-select = ["I", "TRY", "UP"]
-
-# [tool.pytest.ini_options]
-# addopts = "--cov=s3func/ --cov-report=term-missing"
-
-
 [tool.hatch]
 
 [tool.hatch.version]
@@ -45,11 +37,6 @@ path = "s3func/__init__.py"
 
 [tool.hatch.metadata]
 allow-direct-references = true
-
-# [tool.hatch.version]
-# source = "regex_commit"
-# commit_extra_args = ["-e"]
-# path = "s3func/__init__.py"
 
 [tool.hatch.envs.default]
 python = "3.10"
