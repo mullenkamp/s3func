@@ -14,7 +14,7 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 requires-python = ">=3.9"
-dependencies = ['boto3',
+dependencies = ['boto3<1.36',
                 'urllib3>=2',
                 # 'b2sdk>=2',
                 'orjson'
