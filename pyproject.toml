@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "s3func"
 authors = [
-  { name = "s3func", email = "mullenkamp1@gmail.com" }
+  { name = "Mike Kittridge", email = "mullenkamp1@gmail.com" }
 ]
 description = "Simple functions for working with S3"
 readme = "README.md"
@@ -16,13 +16,16 @@ classifiers = [
 requires-python = ">=3.9"
 dependencies = ['boto3<1.36',
                 'urllib3>=2',
-                # 'b2sdk>=2',
-                'orjson'
+                'orjson',
 ]
+
+[project.urls]
+Documentation = "https://mullenkamp.github.io/s3func/"
+Source = "https://github.com/mullenkamp/s3func"
 
 [dependency-groups]
 dev = [
-  "spyder-kernels==2.5",
+  "spyder-kernels==2.5.2",
   "black",
   "mypy",
   "ruff",
@@ -38,59 +41,14 @@ path = "s3func/__init__.py"
 [tool.hatch.metadata]
 allow-direct-references = true
 
-[tool.hatch.envs.default]
-python = "3.10"
-dependencies = [
-    "spyder-kernels==2.5",
-    "black",
-    "mypy",
-    "ruff",
-    "pytest",
-    "pytest-cov",
-    "mkdocs-material",
-    "mkdocstrings[python]",
-    
+[tool.hatch.build.targets.sdist]
+include = [
+    "/s3func",
 ]
-
-[[tool.hatch.envs.all.matrix]]
-python = ['3.9', '3.10', '3.11']
-
-[tool.hatch.envs.lint]
-detached = true
-dependencies = [
-  "black>=23.1.0",
-  "mypy>=1.0.0",
-  "ruff>=0.0.243",
+exclude = [
+  '/s3func/tests/*.csv',
+  '/s3func/tests/*.blt'
 ]
-[tool.hatch.envs.lint.scripts]
-typing = "mypy --install-types --non-interactive {args:src/s3func tests}"
-style = [
-  "ruff {args:.}",
-  "black --check --diff {args:.}",
-]
-fmt = [
-  "black {args:.}",
-  "ruff --fix {args:.}",
-  "style",
-]
-all = [
-  "style",
-  "typing",
-]
-
-[tool.hatch.envs.default.scripts]
-test = "pytest {args:tests}"
-test-cov = "coverage run -m pytest {args:tests}"
-cov-report = [
-  "- coverage combine",
-  "coverage report",
-]
-cov = [
-  "test-cov",
-  "cov-report",
-]
-docs-serve = "mkdocs serve"
-docs-build = "mkdocs build"
 
 [tool.black]
 target-version = ["py37"]
@@ -169,17 +127,4 @@ exclude_lines = [
   "no cov",
   "if __name__ == .__main__.:",
   "if TYPE_CHECKING:",
-]
-
-[project.urls]
-Documentation = "https://mullenkamp.github.io/s3func/"
-Source = "https://github.com/mullenkamp/s3func"
-
-[tool.hatch.build.targets.sdist]
-include = [
-    "/s3func",
-]
-exclude = [
-  '/s3func/tests/*.csv',
-  '/s3func/tests/*.blt'
 ]
