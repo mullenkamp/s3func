@@ -262,7 +262,8 @@ def add_metadata_from_urllib3(response):
     metadata = {'status': response.status}
 
     for key, value in headers.items():
-        if key == 'Content-Length':
+        key = key.lower()
+        if key == 'content-length':
             metadata['content_length'] = int(value)
         elif key == 'x-bz-file-name':
             metadata['key'] = value
@@ -270,7 +271,7 @@ def add_metadata_from_urllib3(response):
             metadata['version_id'] = value
             if '_u' in value:
                 metadata['upload_timestamp'] = datetime.datetime.fromtimestamp(int(value.split('_u')[1]) * 0.001, datetime.timezone.utc)
-        elif key == 'X-Bz-Upload-Timestamp':
+        elif key == 'x-bz-upload-timestamp':
             metadata['upload_timestamp'] = datetime.datetime.fromtimestamp(int(value) * 0.001, datetime.timezone.utc)
         elif 'x-bz-info-' in key:
             new_key = key.split('x-bz-info-')[1]
