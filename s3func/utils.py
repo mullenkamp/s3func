@@ -287,6 +287,9 @@ def add_metadata_from_s3(response):
     Function to create metadata from the s3 headers/response.
     """
     # headers = response.headers
+    if 'CopyObjectResult' in response:
+        response.update(response['CopyObjectResult'])
+
     if 'Metadata' in response:
         metadata = response.pop('Metadata')
     else:

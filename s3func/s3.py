@@ -692,6 +692,69 @@ class S3Session:
             _ = self.client.delete_objects(Bucket=self.bucket, Delete={'Objects': keys2, 'Quiet': True})
 
 
+    def copy_object(self, source_key: str, dest_key: str, source_bucket: str | None=None, dest_bucket: str | None=None, source_version_id: str | None=None, metadata: dict={}, content_type: str=None):
+        """
+        Copy an object within S3. The source and destination must use the same credentials.
+
+        Parameters
+        ----------
+        source_key : str
+            The source key
+        dest_key : str
+            The destination key
+        source_bucket : str
+            The source bucket
+        dest_bucket: str 
+            The destimation bucket
+        source_version_id : str or None
+            The specific version id of the source object. Defaults to None.
+        metadata : dist
+            The metadata for the destination object. If no metadata is provided, then the metadata is copied from the source.
+
+        Returns
+        -------
+        S3Response
+        """
+        source_dict = {'Key': source_key}
+        if isinstance(source_bucket, str):
+            source_dict['Bucket'] = source_bucket
+        else:
+            source_dict['Bucket'] = self.bucket
+        if isinstance(source_version_id, str):
+            source_dict['VersionId'] = source_version_id
+
+        params = {'Key': dest_key, 'CopySource': source_dict}
+        if isinstance(dest_bucket, str):
+            params['Bucket'] = dest_bucket
+        else:
+            params['Bucket'] = self.bucket
+
+        if metadata:
+            # Check for metadata size
+            size = 0
+            for meta_key, meta_val in metadata.items():
+                if isinstance(meta_key, str) and isinstance(meta_val, str):
+                    size += len(meta_key.encode())
+                    size += len(meta_val.encode())
+                else:
+                    raise TypeError('metadata keys and values must be strings.')
+
+            if size > 2048:
+                raise ValueError('metadata size is {size} bytes, but it must be under 2048 bytes.')
+
+            params['Metadata'] = metadata
+            params['MetadataDirective'] = 'REPLACE'
+
+        if isinstance(content_type, str):
+            params['ContentType'] = content_type
+
+        s3resp = utils.S3Response(self.client, 'copy_object', self._stream, **params)
+        s3resp.metadata.update(metadata)
+
+        return s3resp
+
+
+
 
 ########################################################
 ### S3 Locks and holds
