@@ -692,7 +692,7 @@ class S3Session:
             _ = self.client.delete_objects(Bucket=self.bucket, Delete={'Objects': keys2, 'Quiet': True})
 
 
-    def copy_object(self, source_key: str, dest_key: str, source_bucket: str | None=None, dest_bucket: str | None=None, source_version_id: str | None=None, metadata: dict={}, content_type: str=None):
+    def copy_object(self, source_key: str, dest_key: str, source_version_id: str | None=None, source_bucket: str | None=None, dest_bucket: str | None=None, metadata: dict={}, content_type: str=None):
         """
         Copy an object within S3. The source and destination must use the same credentials.
 
@@ -702,12 +702,12 @@ class S3Session:
             The source key
         dest_key : str
             The destination key
-        source_bucket : str
-            The source bucket
-        dest_bucket: str 
-            The destimation bucket
         source_version_id : str or None
             The specific version id of the source object. Defaults to None.
+        source_bucket : str or None
+            The source bucket. If None, then it uses the initialised bucket.
+        dest_bucket: str or None
+            The destimation bucket. If None, then it uses the initialised bucket.
         metadata : dist
             The metadata for the destination object. If no metadata is provided, then the metadata is copied from the source.
 
