@@ -30,13 +30,13 @@ package_path = str(script_path.parent)
 try:
     with open(script_path.joinpath('s3_config.toml'), "rb") as f:
         conn_config = toml.load(f)['connection_config']
+    endpoint_url = conn_config['endpoint_url']
+    access_key_id = conn_config['aws_access_key_id']
+    access_key = conn_config['aws_secret_access_key']
 except:
-    conn_config = {
-        'service_name': 's3',
-        'endpoint_url': os.environ['endpoint_url'],
-        'aws_access_key_id': os.environ['aws_access_key_id'],
-        'aws_secret_access_key': os.environ['aws_secret_access_key'],
-        }
+    endpoint_url = os.environ['endpoint_url']
+    access_key_id = os.environ['aws_access_key_id']
+    access_key = os.environ['aws_secret_access_key']
 
 bucket = 'achelous'
 bucket_id = 'e063bcbc0d6523df74ed0e1d'
@@ -51,11 +51,12 @@ obj_key = uuid.uuid4().hex
 # obj_key = 'manual_test_key'
 base_url = 'https://b2.tethys-ts.xyz/file/' + bucket + '/'
 url = base_url +  obj_key
+obj_key_copy = obj_key + '.copy'
 
 # s3_client = s3.client(conn_config)
-s3_session = s3.S3Session(conn_config, bucket)
+s3_session = s3.S3Session(access_key_id, access_key, bucket, endpoint_url=endpoint_url)
 http_session = http_url.HttpSession()
-b2_session = b2.B2Session(conn_config)
+b2_session = b2.B2Session(access_key_id, access_key)
 
 ## B2
 # auth_file_path = script_path.joinpath('auth_file.sqlite')
@@ -209,6 +210,24 @@ def test_s3_get_object():
     # data2 = stream2.stream.read()
 
     assert len(data1) > 10000
+
+
+def test_s3_copy_object():
+    """
+
+    """
+    resp1 = s3_session.copy_object(obj_key, obj_key_copy)
+
+    meta = resp1.metadata
+    if meta['status'] != 200:
+        raise ValueError('Upload failed')
+
+    resp1_etag = meta['etag']
+
+    stream1 = s3_session.get_object(obj_key)
+    resp2_etag = stream1.metadata['etag']
+
+    assert resp1_etag == resp2_etag
 
 
 def test_http_url_get_object():

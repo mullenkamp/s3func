@@ -5,7 +5,6 @@ Created on May 13 08:04:38 2024
 
 @author: mike
 """
-from pydantic import HttpUrl
 import io
 from typing import List, Union
 # import requests
@@ -120,7 +119,7 @@ class B2Lock:
     """
 
     """
-    def __init__(self, connection_config: dict, bucket: str, key: str, lock_id: str=None, **b2_session_kwargs):
+    def __init__(self, access_key_id: str, access_key: str, bucket: str, key: str, lock_id: str=None, **b2_session_kwargs):
         """
         This class contains a locking mechanism by utilizing B2 objects. It has implementations for both shared and exclusive (the default) locks. It follows the same locking API as python thread locks (https://docs.python.org/3/library/threading.html#lock-objects), but with some extra methods for managing "deadlocks". The required B2 permissions are ListObjects, WriteObjects, and DeleteObjects.
 
@@ -128,10 +127,12 @@ class B2Lock:
 
         Parameters
         ----------
-        connection_config : dict
-            A dictionary of the connection info necessary to establish an S3 connection. It should contain service_name (s3), endpoint_url, aws_access_key_id, and aws_secret_access_key. aws_access_key_id can also be access_key_id or application_key_id. aws_secret_access_key can also be secret_access_key or application_key.
+        access_key_id : str
+            The access key id also known as application_key_id.
+        access_key : str
+            The access key also known as application_key.
         bucket : str
-            The bucket to be used when performing S3 operations.
+            The bucket to be used when performing B2 operations.
         key : str
             The base object key that will be given a lock. The extension ".lock" plus a unique object id will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten.
         lock_id : str or None
@@ -139,11 +140,10 @@ class B2Lock:
         b2_session_kwargs :
             Other kwargs passed to B2Session.
         """
-        b2_session_kwargs['connection_config'] = connection_config
-        b2_session_kwargs['bucket'] = bucket
-        self._b2_session_kwargs = b2_session_kwargs
+        self._b2_session_kwargs = dict(access_key_id=access_key_id, access_key=access_key, bucket=bucket)
+        self._b2_session_kwargs.update(b2_session_kwargs)
 
-        session = B2Session(**b2_session_kwargs)
+        session = B2Session(**self._b2_session_kwargs)
 
         obj_lock_key = key + '.lock.'
         objs = self._list_objects(session, obj_lock_key)
@@ -445,14 +445,16 @@ class B2Session:
     """
 
     """
-    def __init__(self, connection_config: dict=None, bucket: str=None, max_pool_connections: int = 10, max_attempts: int=3, read_timeout: int=120, download_url: HttpUrl=None, stream=True):
+    def __init__(self, access_key_id: str=None, access_key: str=None, bucket: str=None, max_pool_connections: int = 10, max_attempts: int=3, read_timeout: int=120, download_url: str=None, stream=True):
         """
         Establishes an B2 client connection with a B2 account. If connection_config is None, then only get_object and head_object methods are available.
 
         Parameters
         ----------
-        connection_config : dict or None
-            A dictionary of the connection info necessary to establish an B2 connection. It should contain service_name (b2), application_key_id, and application_key. application_key_id can also be access_key_id or aws_access_key_id. application_key can also be secret_access_key or aws_secret_access_key.
+        access_key_id : str or None
+            The access key id also known as application_key_id.
+        access_key : str or None
+            The access key also known as application_key.
         bucket : str or None
             The bucket to be used when performing B2 operations. If None, then the application_key_id must be associated with only one bucket as this info can be obtained from the initial API request. If it's a str and the application_key_id is not specific to a signle bucket, then the listBuckets capability must be associated with the application_key_id.
         max_pool_connections : int
@@ -461,15 +463,19 @@ class B2Session:
             The number of retries if the connection fails.
         read_timeout: int
             The read timeout in seconds.
-        download_url : HttpUrl
+        download_url : str or None
             An alternative download_url when downloading data. If None, the download_url will be retrieved from the initial b2 request. It should NOT include the file/ at the end of the url.
         stream : bool
             Should the connection stay open for streaming or should all the data/content be loaded during the initial request.
         """
         b2_session = http_url.session(max_pool_connections, max_attempts, read_timeout)
 
-        if isinstance(connection_config, dict):
-            conn_config = utils.build_conn_config(connection_config, 'b2')
+        if isinstance(download_url, str):
+            if not utils.is_url(download_url):
+                raise TypeError(f'{download_url} is not a proper http url.')
+
+        if isinstance(access_key_id, str) and isinstance(access_key, str):
+            conn_config = utils.build_conn_config(access_key_id, access_key, 'b2')
 
             resp = get_authorization(conn_config['application_key_id'], conn_config['application_key'], b2_session)
             if resp.status // 100 != 2:
@@ -499,15 +505,15 @@ class B2Session:
             self._auth_data = data
 
         elif (bucket is None) or (download_url is None):
-            raise ValueError('If connection_config is None, then bucket and download_url must be assigned.')
+            raise ValueError('If access_key_id and access_key is None, then bucket and download_url must be assigned.')
 
         self._session = b2_session
         self.bucket = bucket
         self.download_url = download_url
         self._upload_url_data = {}
         self._stream = stream
-        self._connection_config = connection_config
-        self._bucket = bucket
+        self._access_key_id = access_key_id
+        self._access_key = access_key
         self._max_attempts = max_attempts
         self._read_timeout = read_timeout
 
@@ -975,14 +981,14 @@ class B2Session:
         """
         This class contains a locking mechanism by utilizing B2 objects. It has implementations for both shared and exclusive (the default) locks. It follows the same locking API as python thread locks (https://docs.python.org/3/library/threading.html#lock-objects), but with some extra methods for managing "deadlocks". The required B2 permissions are ListObjects, WriteObjects, and DeleteObjects.
 
-        This initialized class can be used as a context manager exactly like the thread locks.
+        This initialized class can be used as a context manager exactly like thread locks.
 
         Parameters
         ----------
         key : str
-            The base object key that will be given a lock. The extension ".lock" plus a unique lock id will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten.
+            The base object key that will be given a lock. The extension ".lock" plus a unique lock id will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten or deleted.
         """
-        return B2Lock(self._connection_config, self._bucket, key, max_attempts=self._max_attempts, read_timeout=self._read_timeout)
+        return B2Lock(self._access_key_id, self._access_key, self.bucket, key, max_attempts=self._max_attempts, read_timeout=self._read_timeout)
 
 
 

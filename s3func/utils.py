@@ -12,11 +12,13 @@ import orjson
 import urllib.parse
 import urllib3
 import botocore
-from typing import Optional
-from pydantic import BaseModel, HttpUrl
+from typing import Optional, Annotated
 from urllib3.util import Retry, Timeout
+# import msgspec
 import datetime
 import copy
+# import re
+from urllib.parse import urlparse
 
 #######################################################
 ### Parameters
@@ -41,89 +43,73 @@ b2_field_mappings = {
     'uploadTimestamp': 'upload_timestamp'
     }
 
+# url_regex = "^(https?://)?[a-z0-9]+?[\.a-z0-9]+\.[a-z]+?[\.a-z]+(\/[a-zA-Z0-9#]+\/?)*$"
+# url_pattern = re.compile(url_regex)
 
 
 ##################################################
-### pydantic classes
+### msgspec classes
 
 
-class S3ConnectionConfig(BaseModel):
-    service_name: str
-    endpoint_url: Optional[HttpUrl]=None
-    aws_access_key_id: str
-    aws_secret_access_key: str
+# class ValClass(msgspec.Struct):
+#     """
+
+#     """
+#     def _validate(self) -> None:
+#         msgspec.convert(msgspec.to_builtins(self), type=self.__class__)
 
 
-class B2ConnectionConfig(BaseModel):
-    application_key_id: str
-    application_key: str
+# class S3ConnectionConfig(ValClass, omit_defaults=True):
+#     service_name: str
+#     aws_access_key_id: str
+#     aws_secret_access_key: str
+#     endpoint_url: Annotated[str, msgspec.Meta(pattern=url_regex)]=None
 
+
+# class B2ConnectionConfig(ValClass):
+#     application_key_id: str
+#     application_key: str
+
+
+
+# @define
+# class TestClass:
+#     service_name: str
+#     aws_access_key_id: str
+#     aws_secret_access_key: str
+#     endpoint_url: str=None
 
 #######################################################
 ### Helper Functions
 
 
-def build_conn_config(connection_config, service_name):
+def is_url(url):
+    try:
+        result = urlparse(url)
+        return all([result.scheme, result.netloc])
+    except AttributeError:
+        return False
+
+
+def build_conn_config(access_key_id, access_key, service_name, endpoint_url=None):
     """
 
     """
-    if 'service_name' not in connection_config:
-        raise ValueError('service_name not in connection_config.')
-
-    # service_name = connection_config['service_name'].lower()
-
     service_name = service_name.lower()
     conn_config = {}
     if service_name == 's3':
-        if 'aws_access_key_id' not in connection_config:
-            if 'access_key_id' in connection_config:
-                conn_config['aws_access_key_id'] = connection_config['access_key_id']
-            elif 'application_key_id' in connection_config:
-                conn_config['aws_access_key_id'] = connection_config['application_key_id']
-            else:
-                raise ValueError('Nothing available to represent aws_access_key_id.')
-        else:
-            conn_config['aws_access_key_id'] = connection_config['aws_access_key_id']
+        if isinstance(endpoint_url, str):
+            if not is_url(endpoint_url):
+                raise TypeError(f'{endpoint_url} is not a proper http url.')
+            conn_config['endpoint_url'] = endpoint_url
 
-        if 'aws_secret_access_key' not in connection_config:
-            if 'secret_access_key' in connection_config:
-                conn_config['aws_secret_access_key'] = connection_config['secret_access_key']
-            elif 'application_key_id' in connection_config:
-                conn_config['aws_secret_access_key'] = connection_config['application_key']
-            else:
-                raise ValueError('Nothing available to represent aws_secret_access_key.')
-        else:
-            conn_config['aws_secret_access_key'] = connection_config['aws_secret_access_key']
-
-        if 'endpoint_url' in connection_config:
-            conn_config['endpoint_url'] = connection_config['endpoint_url']
-
+        conn_config['aws_access_key_id'] = access_key_id
+        conn_config['aws_secret_access_key'] = access_key
         conn_config['service_name'] = service_name
 
-        _ = S3ConnectionConfig(**conn_config)
-
     elif service_name == 'b2':
-        if 'application_key_id' not in connection_config:
-            if 'access_key_id' in connection_config:
-                conn_config['application_key_id'] = connection_config['access_key_id']
-            elif 'aws_access_key_id' in connection_config:
-                conn_config['application_key_id'] = connection_config['aws_access_key_id']
-            else:
-                raise ValueError('Nothing available to represent application_key_id.')
-        else:
-            conn_config['application_key_id'] = connection_config['application_key_id']
-
-        if 'application_key' not in connection_config:
-            if 'secret_access_key' in connection_config:
-                conn_config['application_key'] = connection_config['secret_access_key']
-            elif 'aws_secret_access_key' in connection_config:
-                conn_config['application_key'] = connection_config['aws_secret_access_key']
-            else:
-                raise ValueError('Nothing available to represent aws_secret_access_key.')
-        else:
-            conn_config['application_key'] = connection_config['application_key']
-
-        _ = B2ConnectionConfig(**conn_config)
+        conn_config['application_key_id'] = access_key_id
+        conn_config['application_key'] = access_key
 
     else:
         raise ValueError('service_name must be either s3 or b2.')
@@ -276,7 +262,8 @@ def add_metadata_from_urllib3(response):
     metadata = {'status': response.status}
 
     for key, value in headers.items():
-        if key == 'Content-Length':
+        key = key.lower()
+        if key == 'content-length':
             metadata['content_length'] = int(value)
         elif key == 'x-bz-file-name':
             metadata['key'] = value
@@ -284,7 +271,7 @@ def add_metadata_from_urllib3(response):
             metadata['version_id'] = value
             if '_u' in value:
                 metadata['upload_timestamp'] = datetime.datetime.fromtimestamp(int(value.split('_u')[1]) * 0.001, datetime.timezone.utc)
-        elif key == 'X-Bz-Upload-Timestamp':
+        elif key == 'x-bz-upload-timestamp':
             metadata['upload_timestamp'] = datetime.datetime.fromtimestamp(int(value) * 0.001, datetime.timezone.utc)
         elif 'x-bz-info-' in key:
             new_key = key.split('x-bz-info-')[1]
@@ -301,6 +288,9 @@ def add_metadata_from_s3(response):
     Function to create metadata from the s3 headers/response.
     """
     # headers = response.headers
+    if 'CopyObjectResult' in response:
+        response.update(response['CopyObjectResult'])
+
     if 'Metadata' in response:
         metadata = response.pop('Metadata')
     else:
@@ -485,57 +475,6 @@ class S3ListResponse:
         try:
             resp = func(**kwargs)
             status = resp['ResponseMetadata']['HTTPStatusCode']
-
-            # objects = []
-            # del_markers = []
-            # while True:
-            #     if 'Versions' in resp:
-            #         for js in resp['Versions']:
-            #             objects.append({
-            #                 'etag': js['ETag'].strip('"'),
-            #                 'content_length': js['Size'],
-            #                 'key': js['Key'],
-            #                 'version_id': js['VersionId'],
-            #                 'is_latest': js['IsLatest'],
-            #                 'upload_timestamp': js['LastModified'],
-            #                 'owner': js['Owner']['ID'],
-            #                 })
-            #         if 'DeleteMarkers' in resp:
-            #             for js in resp['DeleteMarkers']:
-            #                 del_markers.append({
-            #                     'key': js['Key'],
-            #                     'version_id': js['VersionId'],
-            #                     'is_latest': js['IsLatest'],
-            #                     'upload_timestamp': js['LastModified'],
-            #                     'owner': js['Owner']['ID'],
-            #                     })
-            #         if 'NextKeyMarker' in resp:
-            #             kwargs['KeyMarker'] = resp['NextKeyMarker']
-            #         else:
-            #             break
-
-            #     elif 'Contents' in resp:
-            #         for js in resp['Contents']:
-            #             objects.append({
-            #                 'etag': js['ETag'].strip('"'),
-            #                 'content_length': js['Size'],
-            #                 'key': js['Key'],
-            #                 'upload_timestamp': js['LastModified'],
-            #                 })
-            #         if 'NextContinuationToken' in resp:
-            #             kwargs['ContinuationToken'] = resp['NextContinuationToken']
-            #         else:
-            #             break
-            #     else:
-            #         break
-
-            #     resp = func(**kwargs)
-
-
-            # if objects:
-            #     metadata['objects'] = objects
-            # if del_markers:
-            #     metadata['delete_markers'] = del_markers
 
         except s3_client.exceptions.ClientError as err:
             resp = err.response.copy()
@@ -761,43 +700,6 @@ class B2ListResponse:
         params['maxFileCount'] = 1
 
         resp = session.request('get', url, headers=headers, fields=params)
-
-        # objects = []
-        # while True:
-        #     resp = session.request('get', url, headers=headers, fields=params)
-        #     data = orjson.loads(resp.data)
-
-        #     if 'files' in data:
-        #         for js in data['files']:
-        #             if 'unverified:' in js['contentSha1']:
-        #                 js['contentSha1'] = js['contentSha1'].split('unverified:')[1]
-        #             dict1 = {
-        #                 'action': js['action'],
-        #                 'content_length': js['contentLength'],
-        #                 'content_md5': js['contentMd5'],
-        #                 'content_sha1': js['contentSha1'],
-        #                 'content_type': js['contentType'],
-        #                 'key': js['fileName'],
-        #                 'version_id': js['fileId'],
-        #                 'upload_timestamp': datetime.datetime.fromtimestamp(js['uploadTimestamp']*0.001, datetime.timezone.utc),
-        #                 'owner': js['accountId'],
-        #                 }
-        #             if 'fileInfo' in js:
-        #                 for fi, val in js['fileInfo'].items():
-        #                     if fi == 'src_last_modified_millis':
-        #                         dict1['last_modified'] = datetime.datetime.fromtimestamp(int(val)*0.001, datetime.timezone.utc)
-        #                     else:
-        #                         dict1[fi] = val
-        #             objects.append(dict1)
-
-        #         if data['nextFileName'] is None:
-        #             break
-        #         else:
-        #             params['startFileName'] = data['nextFileName']
-        #             if 'nextFileId' in data:
-        #                 params['startFileId'] = data['nextFileId']
-        #     else:
-        #         break
 
         error = {}
         metadata = add_metadata_from_urllib3(resp)

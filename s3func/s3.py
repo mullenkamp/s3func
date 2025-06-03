@@ -46,7 +46,7 @@ md5_locks = {
 ### Functions
 
 
-def client(connection_config: dict, max_pool_connections: int = 10, max_attempts: int = 3, retry_mode: str='adaptive', timeout: int=120):
+def client(access_key_id: str, access_key: str, endpoint_url: str=None, max_pool_connections: int = 10, max_attempts: int = 3, retry_mode: str='adaptive', timeout: int=120):
     """
     Creates a botocore.client.BaseClient associated with an S3 account. This can use the legacy connect (signature_version s3) and the current version.
 
@@ -68,20 +68,23 @@ def client(connection_config: dict, max_pool_connections: int = 10, max_attempts
     botocore.client.BaseClient
     """
     ## Validate config
-    conn_config = utils.build_conn_config(connection_config, 's3')
+    conn_config = utils.build_conn_config(access_key_id, access_key, 's3', endpoint_url)
 
-    if 'config' in conn_config:
-        config0 = conn_config.pop('config')
-        config0.update({'max_pool_connections': max_pool_connections, 'retries': {'mode': retry_mode, 'max_attempts': max_attempts}, 'read_timeout': timeout})
-        config1 = boto3.session.Config(**config0)
+    # if 'config' in conn_config:
+    #     config0 = conn_config.pop('config')
+    #     config0.update({'max_pool_connections': max_pool_connections, 'retries': {'mode': retry_mode, 'max_attempts': max_attempts}, 'read_timeout': timeout})
+    #     config1 = boto3.session.Config(**config0)
 
-        s3_config1 = conn_config.copy()
-        s3_config1.update({'config': config1})
+    #     s3_config1 = conn_config.copy()
+    #     s3_config1.update({'config': config1})
 
-        s3 = boto3.client(**s3_config1)
-    else:
-        conn_config.update({'config': botocore.config.Config(max_pool_connections=max_pool_connections, retries={'mode': retry_mode, 'max_attempts': max_attempts}, read_timeout=timeout)})
-        s3 = boto3.client(**conn_config)
+    #     s3 = boto3.client(**s3_config1)
+    # else:
+    #     conn_config.update({'config': botocore.config.Config(max_pool_connections=max_pool_connections, retries={'mode': retry_mode, 'max_attempts': max_attempts}, read_timeout=timeout)})
+    #     s3 = boto3.client(**conn_config)
+
+    conn_config.update({'config': botocore.config.Config(max_pool_connections=max_pool_connections, retries={'mode': retry_mode, 'max_attempts': max_attempts}, read_timeout=timeout)})
+    s3 = boto3.client(**conn_config)
 
     return s3
 
@@ -112,7 +115,7 @@ class S3Lock:
     """
 
     """
-    def __init__(self, connection_config: dict, bucket: str, key: str, lock_id: str=None, **s3_session_kwargs):
+    def __init__(self, access_key_id: str, access_key: str, bucket: str, key: str, endpoint_url: str=None, lock_id: str=None, **s3_session_kwargs):
         """
         This class contains a locking mechanism by utilizing S3 objects. It has implementations for both shared and exclusive (the default) locks. It follows the same locking API as python thread locks (https://docs.python.org/3/library/threading.html#lock-objects), but with some extra methods for managing "deadlocks". The required S3 permissions are ListObjects, WriteObjects, and DeleteObjects.
 
@@ -120,10 +123,14 @@ class S3Lock:
 
         Parameters
         ----------
-        connection_config : dict
-            A dictionary of the connection info necessary to establish an S3 connection. It should contain service_name (s3), endpoint_url, aws_access_key_id, and aws_secret_access_key. aws_access_key_id can also be access_key_id or application_key_id. aws_secret_access_key can also be secret_access_key or application_key.
+        access_key_id : str
+            The access key id also known as aws_access_key_id.
+        access_key : str
+            The access key also known as aws_secret_access_key.
         bucket : str
             The bucket to be used when performing S3 operations.
+        endpoint_url : str
+            The nedpoint http(s) url for the s3 service.
         key : str
             The base object key that will be given a lock. The extension ".lock" plus a unique object id will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten.
         lock_id : str or None
@@ -131,11 +138,14 @@ class S3Lock:
         s3_session_kwargs :
             Other kwargs passed to S3Session.
         """
-        s3_session_kwargs['connection_config'] = connection_config
-        s3_session_kwargs['bucket'] = bucket
-        self._s3_session_kwargs = s3_session_kwargs
+        # self.bucket = bucket
+        # self._access_key_id = access_key_id
+        # self._access_key = access_key
+        # self._endpoint_url = endpoint_url
+        self._s3_session_kwargs = dict(access_key_id=access_key_id, access_key=access_key, bucket=bucket, endpoint_url=endpoint_url)
+        self._s3_session_kwargs.update(s3_session_kwargs)
 
-        session = S3Session(**s3_session_kwargs)
+        session = S3Session(**self._s3_session_kwargs)
 
         obj_lock_key = key + '.lock.'
         objs = self._list_objects(session, obj_lock_key)
@@ -449,16 +459,20 @@ class S3Session:
     """
 
     """
-    def __init__(self, connection_config: dict, bucket: str,  max_pool_connections: int = 10, max_attempts: int = 3, retry_mode: str='adaptive', read_timeout: int=120, stream=True):
+    def __init__(self, access_key_id: str, access_key: str, bucket: str, endpoint_url: str=None, max_pool_connections: int = 10, max_attempts: int = 3, retry_mode: str='adaptive', read_timeout: int=120, stream=True):
         """
         Establishes an S3 client connection with an S3 account. This can use the legacy connect (signature_version s3) and the current version.
 
         Parameters
         ----------
-        connection_config : dict
-            A dictionary of the connection info necessary to establish an S3 connection. It should contain service_name (s3), endpoint_url, aws_access_key_id, and aws_secret_access_key. aws_access_key_id can also be access_key_id or application_key_id. aws_secret_access_key can also be secret_access_key or application_key.
+        access_key_id : str
+            The access key id also known as aws_access_key_id.
+        access_key : str
+            The access key also known as aws_secret_access_key.
         bucket : str
             The bucket to be used when performing S3 operations.
+        endpoint_url : str
+            The nedpoint http(s) url for the s3 service.
         max_pool_connections : int
             The number of simultaneous connections for the S3 connection.
         max_attempts: int
@@ -470,17 +484,17 @@ class S3Session:
         stream : bool
             Should the connection stay open for streaming or should all the data/content be loaded during the initial request.
         """
-        s3 = client(connection_config, max_pool_connections, max_attempts, retry_mode, read_timeout)
+        s3 = client(access_key_id, access_key, endpoint_url, max_pool_connections, max_attempts, retry_mode, read_timeout)
 
-        self._client = s3
+        self.client = s3
         self.bucket = bucket
         self._stream = stream
-        self._connection_config = connection_config
-        self._bucket = bucket
+        self._endpoint_url = endpoint_url
+        self._access_key_id = access_key_id
+        self._access_key = access_key
         self._max_attempts = max_attempts
         self._retry_mode = retry_mode
         self._read_timeout = read_timeout
-        # self.buffer_size = buffer_size
 
 
     def get_object(self, key: str, version_id: str=None, range_start: int=None, range_end: int=None):
@@ -507,7 +521,7 @@ class S3Session:
         ## Get the object
         params = utils.build_s3_params(self.bucket, key=key, version_id=version_id, range_start=range_start, range_end=range_end)
 
-        s3resp = utils.S3Response(self._client, 'get_object', self._stream, **params)
+        s3resp = utils.S3Response(self.client, 'get_object', self._stream, **params)
 
         return s3resp
 
@@ -529,7 +543,7 @@ class S3Session:
         """
         params = utils.build_s3_params(self.bucket, key=key, version_id=version_id)
 
-        s3resp = utils.S3Response(self._client, 'head_object', self._stream, **params)
+        s3resp = utils.S3Response(self.client, 'head_object', self._stream, **params)
 
         return s3resp
 
@@ -545,7 +559,7 @@ class S3Session:
         obj : bytes, io.BytesIO, or io.BufferedIOBase
             The file object to be uploaded.
         metadata : dict or None
-            A dict of the user metadata that should be saved along with the object.
+            A dict of the user metadata that should be saved along with the object. Keys and values must be strings. User-metadata must be under 2048 bytes of string encoded data.
         content_type : str
             The http content type to associate the object with.
         object_legal_hold : bool
@@ -575,7 +589,7 @@ class S3Session:
         params = utils.build_s3_params(self.bucket, key=key, metadata=metadata, content_type=content_type, object_legal_hold=object_legal_hold)
         params['Body'] = obj
 
-        s3resp = utils.S3Response(self._client, 'put_object', self._stream, **params)
+        s3resp = utils.S3Response(self.client, 'put_object', self._stream, **params)
         s3resp.metadata.update(metadata)
 
         return s3resp
@@ -601,7 +615,7 @@ class S3Session:
         """
         params = utils.build_s3_params(self.bucket, start_after=start_after, prefix=prefix, delimiter=delimiter, max_keys=max_keys)
 
-        resp = utils.S3ListResponse(self._client, 'list_objects_v2', **params)
+        resp = utils.S3ListResponse(self.client, 'list_objects_v2', **params)
 
         return resp
 
@@ -627,7 +641,7 @@ class S3Session:
         """
         params = utils.build_s3_params(self.bucket, key_marker=start_after, prefix=prefix, delimiter=delimiter, max_keys=max_keys)
 
-        resp = utils.S3ListResponse(self._client, 'list_object_versions', **params)
+        resp = utils.S3ListResponse(self.client, 'list_object_versions', **params)
 
         return resp
 
@@ -649,7 +663,7 @@ class S3Session:
         """
         params = utils.build_s3_params(self.bucket, key=key, version_id=version_id)
 
-        s3resp = utils.S3Response(self._client, 'delete_object', self._stream, **params)
+        s3resp = utils.S3Response(self.client, 'delete_object', self._stream, **params)
 
         return s3resp
 
@@ -675,7 +689,70 @@ class S3Session:
                     raise ValueError('"version_id" must be passed in the list of dict.')
                 keys2.append(key)
 
-            _ = self._client.delete_objects(Bucket=self.bucket, Delete={'Objects': keys2, 'Quiet': True})
+            _ = self.client.delete_objects(Bucket=self.bucket, Delete={'Objects': keys2, 'Quiet': True})
+
+
+    def copy_object(self, source_key: str, dest_key: str, source_bucket: str | None=None, dest_bucket: str | None=None, source_version_id: str | None=None, metadata: dict={}, content_type: str=None):
+        """
+        Copy an object within S3. The source and destination must use the same credentials.
+
+        Parameters
+        ----------
+        source_key : str
+            The source key
+        dest_key : str
+            The destination key
+        source_bucket : str
+            The source bucket
+        dest_bucket: str 
+            The destimation bucket
+        source_version_id : str or None
+            The specific version id of the source object. Defaults to None.
+        metadata : dist
+            The metadata for the destination object. If no metadata is provided, then the metadata is copied from the source.
+
+        Returns
+        -------
+        S3Response
+        """
+        source_dict = {'Key': source_key}
+        if isinstance(source_bucket, str):
+            source_dict['Bucket'] = source_bucket
+        else:
+            source_dict['Bucket'] = self.bucket
+        if isinstance(source_version_id, str):
+            source_dict['VersionId'] = source_version_id
+
+        params = {'Key': dest_key, 'CopySource': source_dict}
+        if isinstance(dest_bucket, str):
+            params['Bucket'] = dest_bucket
+        else:
+            params['Bucket'] = self.bucket
+
+        if metadata:
+            # Check for metadata size
+            size = 0
+            for meta_key, meta_val in metadata.items():
+                if isinstance(meta_key, str) and isinstance(meta_val, str):
+                    size += len(meta_key.encode())
+                    size += len(meta_val.encode())
+                else:
+                    raise TypeError('metadata keys and values must be strings.')
+
+            if size > 2048:
+                raise ValueError('metadata size is {size} bytes, but it must be under 2048 bytes.')
+
+            params['Metadata'] = metadata
+            params['MetadataDirective'] = 'REPLACE'
+
+        if isinstance(content_type, str):
+            params['ContentType'] = content_type
+
+        s3resp = utils.S3Response(self.client, 'copy_object', self._stream, **params)
+        s3resp.metadata.update(metadata)
+
+        return s3resp
+
 
 
 
@@ -700,7 +777,7 @@ class S3Session:
         """
         params = utils.build_s3_params(self.bucket, key=key, version_id=version_id)
 
-        s3resp = utils.S3Response(self._client, 'get_object_legal_hold', self._stream, **params)
+        s3resp = utils.S3Response(self.client, 'get_object_legal_hold', self._stream, **params)
 
         return s3resp
 
@@ -730,7 +807,7 @@ class S3Session:
         params = utils.build_s3_params(self.bucket, key=key, version_id=version_id)
         params['LegalHold'] = hold
 
-        s3resp = utils.S3Response(self._client, 'put_object_legal_hold', self._stream, **params)
+        s3resp = utils.S3Response(self.client, 'put_object_legal_hold', self._stream, **params)
 
         return s3resp
 
@@ -743,7 +820,7 @@ class S3Session:
         -------
         S3Reponse
         """
-        s3resp = utils.S3Response(self._client, 'get_object_lock_configuration', self._stream, Bucket=self.bucket)
+        s3resp = utils.S3Response(self.client, 'get_object_lock_configuration', self._stream, Bucket=self.bucket)
 
         return s3resp
 
@@ -767,7 +844,7 @@ class S3Session:
             hold = {'ObjectLockEnabled': 'Disable'}
 
         # resp = s3.put_object_lock_configuration(Bucket=bucket, ObjectLockConfiguration=hold)
-        s3resp = utils.S3Response(self._client, 'put_object_lock_configuration', self._stream, Bucket=self.bucket, ObjectLockConfiguration=hold)
+        s3resp = utils.S3Response(self.client, 'put_object_lock_configuration', self._stream, Bucket=self.bucket, ObjectLockConfiguration=hold)
 
         return s3resp
 
@@ -776,14 +853,14 @@ class S3Session:
         """
         This class contains a locking mechanism by utilizing S3 objects. It has implementations for both shared and exclusive (the default) locks. It follows the same locking API as python thread locks (https://docs.python.org/3/library/threading.html#lock-objects), but with some extra methods for managing "deadlocks". The required S3 permissions are ListObjects, WriteObjects, and DeleteObjects.
 
-        This initialized class can be used as a context manager exactly like the thread locks.
+        This initialized class can be used as a context manager exactly like thread locks.
 
         Parameters
         ----------
         key : str
-            The base object key that will be given a lock. The extension ".lock" plus a unique lock id will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten.
+            The base object key that will be given a lock. The extension ".lock" plus a unique lock id will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten or deleted.
         """
-        return S3Lock(self._connection_config, self._bucket, key, max_attempts=self._max_attempts, retry_mode=self._retry_mode, read_timeout=self._read_timeout)
+        return S3Lock(self._access_key_id, self._access_key, self.bucket, key, self._endpoint_url, max_attempts=self._max_attempts, retry_mode=self._retry_mode, read_timeout=self._read_timeout)
 
 
 
