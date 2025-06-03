@@ -758,7 +758,6 @@ class B2Session:
 
             self._get_upload_url()
             upload_url_data = self._upload_url_data[thread_name]
-            upload_url = upload_url_data['upload_url']
             headers['Authorization'] = upload_url_data['auth_token']
             upload_url = upload_url_data['upload_url']
 
@@ -881,6 +880,92 @@ class B2Session:
     #             keys2.append(key)
 
     #         _ = self._client.delete_objects(Bucket=self.bucket, Delete={'Objects': keys2, 'Quiet': True})
+
+
+    def copy_object(self, dest_key: str, source_version_id: str, dest_bucket_id: str | None=None, metadata: dict={}, content_type: str=None):
+        """
+        Copy an object within B2. The source and destination must use the same credentials.
+
+        Parameters
+        ----------
+        dest_key : str
+            The destination key
+        source_version_id : str
+            The specific version id of the source object. Required for B2 instead of the source_key.
+        source_bucket : str or None
+            The source bucket. If None, then it uses the initialised bucket.
+        dest_bucket_id: str or None
+            The destimation bucket id. If None, then it uses the initialised bucket.
+        metadata : dist
+            The metadata for the destination object. If no metadata is provided, then the metadata is copied from the source.
+
+        Returns
+        -------
+        B2Response
+        """
+        headers = {'fileName': urllib.parse.quote(dest_key), 'sourceFileId': source_version_id}
+        if isinstance(dest_bucket_id, str):
+            headers['destinationBucketId'] = dest_bucket_id
+
+        ## Get upload url
+        thread_name = current_thread().name
+        if thread_name not in self._upload_url_data:
+            self._get_upload_url()
+
+        upload_url_data = self._upload_url_data[thread_name]
+        # upload_url = upload_url_data['upload_url']
+
+        headers['Authorization'] = upload_url_data['auth_token']
+
+        if isinstance(content_type, str):
+            headers['Content-Type'] = content_type
+        else:
+            headers['Content-Type'] = 'b2/x-auto'
+
+        ## User metadata - must be less than 2 kb
+        user_meta = {}
+        if metadata:
+            headers['MetadataDirective'] = 'REPLACE'
+            for key, value in metadata.items():
+                if isinstance(key, str) and isinstance(value, str):
+                    user_meta['X-Bz-Info-' + key] = value
+                else:
+                    raise TypeError('metadata keys and values must be strings.')
+
+        # Check for size and add to headers
+        size = 0
+        for key, val in user_meta.items():
+            size += len(key.encode())
+            size += len(val.encode())
+            headers[key] = val
+
+        if size > 2048:
+            raise ValueError('metadata size is {size} bytes, but it must be under 2048 bytes.')
+
+        # TODO : In python version 3.11, the file_digest function can input a file object
+
+        url = urllib.parse.urljoin(self.api_url, '/b2api/v4/b2_copy_file')
+
+        counter = 0
+        while True:
+            resp = self._session.request('post', url, headers=headers)
+            if resp.status == 200:
+                break
+            elif resp.status not in (401, 503):
+                error = orjson.loads(resp.data)
+                raise urllib3.exceptions.HTTPError(f'{error}')
+            elif counter == 5:
+                error = orjson.loads(resp.data)
+                raise urllib3.exceptions.HTTPError(f'{error}')
+
+            self._get_upload_url()
+            upload_url_data = self._upload_url_data[thread_name]
+            headers['Authorization'] = upload_url_data['auth_token']
+
+        b2resp = utils.B2Response(resp, self._stream)
+        b2resp.metadata.update(utils.get_metadata_from_b2_put_object(resp))
+
+        return b2resp
 
 
 
