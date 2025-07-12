@@ -23,13 +23,13 @@ from . import utils
 ### Functions
 
 
-def session(max_pool_connections: int = 10, max_attempts: int=3, timeout: int=120):
+def session(max_connections: int = 10, max_attempts: int=3, timeout: int=120):
     """
     Function to setup a urllib3 pool manager for url downloads.
 
     Parameters
     ----------
-    max_pool_connections : int
+    max_connections : int
         The number of simultaneous connections for the S3 connection.
     max_attempts: int
         The number of retries if the connection fails.
@@ -45,7 +45,7 @@ def session(max_pool_connections: int = 10, max_attempts: int=3, timeout: int=12
         total=max_attempts,
         backoff_factor=1,
         )
-    http = urllib3.PoolManager(num_pools=max_pool_connections, timeout=timeout, retries=retries)
+    http = urllib3.PoolManager(maxsize=max_connections, timeout=timeout, retries=retries, block=True)
 
     return http
 
@@ -69,13 +69,13 @@ class HttpSession:
     """
 
     """
-    def __init__(self, max_pool_connections: int = 10, max_attempts: int=3, read_timeout: int=120, stream=True):
+    def __init__(self, max_connections: int = 10, max_attempts: int=3, read_timeout: int=120, stream=True):
         """
         Class using a urllib3 pool manager for url requests.
 
         Parameters
         ----------
-        max_pool_connections : int
+        max_connections : int
             The number of simultaneous connections for the S3 connection.
         max_attempts: int
             The number of retries if the connection fails.
@@ -85,7 +85,7 @@ class HttpSession:
             Should the connection stay open for streaming or should all the data/content be loaded during the initial request.
 
         """
-        http_session = session(max_pool_connections, max_attempts, read_timeout)
+        http_session = session(max_connections, max_attempts, read_timeout)
 
         self._session = http_session
         self._stream = stream
