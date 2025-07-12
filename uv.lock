@@ -1,4 +1,5 @@
 version = 1
+revision = 1
 requires-python = ">=3.9"
 resolution-markers = [
     "python_full_version >= '3.10'",
@@ -980,7 +981,6 @@ wheels = [
 
 [[package]]
 name = "s3func"
-version = "0.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "boto3", version = "1.7.84", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },

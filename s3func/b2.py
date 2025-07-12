@@ -445,7 +445,7 @@ class B2Session:
     """
 
     """
-    def __init__(self, access_key_id: str=None, access_key: str=None, bucket: str=None, max_pool_connections: int = 10, max_attempts: int=3, read_timeout: int=120, download_url: str=None, stream=True):
+    def __init__(self, access_key_id: str=None, access_key: str=None, bucket: str=None, max_connections: int = 10, max_attempts: int=3, read_timeout: int=120, download_url: str=None, stream=True):
         """
         Establishes an B2 client connection with a B2 account. If connection_config is None, then only get_object and head_object methods are available.
 
@@ -457,7 +457,7 @@ class B2Session:
             The access key also known as application_key.
         bucket : str or None
             The bucket to be used when performing B2 operations. If None, then the application_key_id must be associated with only one bucket as this info can be obtained from the initial API request. If it's a str and the application_key_id is not specific to a signle bucket, then the listBuckets capability must be associated with the application_key_id.
-        max_pool_connections : int
+        max_connections : int
             The number of simultaneous connections for the B2 connection.
         max_attempts: int
             The number of retries if the connection fails.
@@ -468,7 +468,7 @@ class B2Session:
         stream : bool
             Should the connection stay open for streaming or should all the data/content be loaded during the initial request.
         """
-        b2_session = http_url.session(max_pool_connections, max_attempts, read_timeout)
+        b2_session = http_url.session(max_connections, max_attempts, read_timeout)
 
         if isinstance(download_url, str):
             if not utils.is_url(download_url):
