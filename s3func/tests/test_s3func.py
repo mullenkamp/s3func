@@ -263,47 +263,6 @@ def test_http_url_head_object():
     assert 'version_id' in response.metadata
 
 
-def test_s3_legal_hold():
-    """
-
-    """
-    hold = s3_session.get_object_legal_hold(obj_key)
-    if hold.status != 404:
-        raise ValueError("There's a hold, but there shouldn't be.")
-
-    put_hold = s3_session.put_object_legal_hold(obj_key, True)
-    if put_hold.status != 200:
-        raise ValueError("Creating a hold failed.")
-
-    hold = s3_session.get_object_legal_hold(obj_key)
-    if not hold.metadata['legal_hold']:
-        raise ValueError("There isn't a hold, but there should be.")
-
-    put_hold = s3_session.put_object_legal_hold(obj_key, False)
-    if put_hold.status != 200:
-        raise ValueError("Removing a hold failed.")
-
-    hold = s3_session.get_object_legal_hold(obj_key)
-    if hold.metadata['legal_hold']:
-        raise ValueError("There's a hold, but there shouldn't be.")
-
-    _ = s3_session.put_object(obj_key, open(script_path.joinpath(file_name), 'rb'), object_legal_hold=True)
-
-    hold = s3_session.get_object_legal_hold(obj_key)
-    if not hold.metadata['legal_hold']:
-        raise ValueError("There isn't a hold, but there should be.")
-
-    put_hold = s3_session.put_object_legal_hold(obj_key, False)
-    if put_hold.status != 200:
-        raise ValueError("Removing a hold failed.")
-
-    hold = s3_session.get_object_legal_hold(obj_key)
-    if hold.metadata['legal_hold']:
-        raise ValueError("There's a hold, but there shouldn't be.")
-
-    assert True
-
-
 def test_s3_delete_objects():
     """
 

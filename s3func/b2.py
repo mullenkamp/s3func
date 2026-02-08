@@ -278,10 +278,11 @@ class B2Lock:
             for l in objs:
                 lock_id, seq = l['key'][self._obj_lock_key_len:].split('-')
                 if lock_id != self.lock_id:
+                    timestamp = l.get('last_modified', l['upload_timestamp'])
                     if lock_id in other_locks:
-                        other_locks[lock_id].update({int(seq): l['last_modified']})
+                        other_locks[lock_id].update({int(seq): timestamp})
                     else:
-                        other_locks[lock_id] = {int(seq): l['last_modified'],
+                        other_locks[lock_id] = {int(seq): timestamp,
                                                'lock_type': l['lock_type'],
                                                }
         return other_locks
@@ -304,7 +305,9 @@ class B2Lock:
             for l in objs:
                 lock_id, seq = l['key'][self._obj_lock_key_len:].split('-')
                 if lock_id != self.lock_id:
-                    other_locks[lock_id] = {'last_modified': l['last_modified'],
+                    # Fallback to upload_timestamp if last_modified (custom metadata) is missing
+                    timestamp = l.get('last_modified', l['upload_timestamp'])
+                    other_locks[lock_id] = {'last_modified': timestamp,
                                            'lock_type': l['lock_type'],
                                            'owner': l['owner'],
                                            }
@@ -338,7 +341,8 @@ class B2Lock:
         keys = []
         if objs:
             for l in objs:
-                if l['last_modified'] < timestamp:
+                timestamp_obj = l.get('last_modified', l['upload_timestamp'])
+                if timestamp_obj < timestamp:
                     _ = session.delete_object(l['key'], l['version_id'])
                     keys.append(l)
 
@@ -963,100 +967,6 @@ class B2Session:
         b2resp.metadata.update(utils.get_metadata_from_b2_put_object(resp))
 
         return b2resp
-
-
-
-########################################################
-### B2 Locks and holds
-
-
-    # def get_object_legal_hold(self, key: str, version_id: str=None):
-    #     """
-    #     Method to get the staus of a legal hold of an object. The user must have b2:GetObjectLegalHold or b2:readFileLegalHolds permissions for this request.
-
-    #     Parameters
-    #     ----------
-    #     key : str
-    #         The key name for the uploaded object.
-    #     version_id : str
-    #         The B2 version id associated with the object.
-
-    #     Returns
-    #     -------
-    #     B2Response
-    #     """
-    #     params = utils.build_b2_params(self.bucket, key=key, version_id=version_id)
-
-    #     b2resp = utils.B2Response(self._client, 'get_object_legal_hold', **params)
-
-    #     return b2resp
-
-
-    # def put_object_legal_hold(self, key: str, lock: bool=False, version_id: str=None):
-    #     """
-    #     Method to put or remove a legal hold on an object. The user must have b2:PutObjectLegalHold or b2:writeFileLegalHolds permissions for this request.
-
-    #     Parameters
-    #     ----------
-    #     key : str
-    #         The key name for the uploaded object.
-    #     lock : bool
-    #         Should a lock be added to the object?
-    #     version_id : str
-    #         The B2 version id associated with the object.
-
-    #     Returns
-    #     -------
-    #     None
-    #     """
-    #     if lock:
-    #         hold = {'Status': 'ON'}
-    #     else:
-    #         hold = {'Status': 'OFF'}
-
-    #     params = utils.build_b2_params(self.bucket, key=key, version_id=version_id)
-    #     params['LegalHold'] = hold
-
-    #     b2resp = utils.B2Response(self._client, 'put_object_legal_hold', **params)
-
-    #     return b2resp
-
-
-    # def get_object_lock_configuration(self):
-    #     """
-    #     Function to whther a bucket is configured to have object locks. The user must have b2:GetBucketObjectLockConfiguration or b2:readBucketRetentions permissions for this request.
-
-    #     Returns
-    #     -------
-    #     B2Reponse
-    #     """
-    #     b2resp = utils.B2Response(self._client, 'get_object_lock_configuration', Bucket=self.bucket)
-
-    #     return b2resp
-
-
-    # def put_object_lock_configuration(self, lock: bool=False):
-    #     """
-    #     Function to enable or disable object locks for a bucket. The user must have b2:PutBucketObjectLockConfiguration or b2:writeBucketRetentions permissions for this request.
-
-    #     Parameters
-    #     ----------
-    #     lock : bool
-    #         Should a lock be enabled for the bucket?
-
-    #     Returns
-    #     -------
-    #     boto3 response
-    #     """
-    #     if lock:
-    #         hold = {'ObjectLockEnabled': 'Enable'}
-    #     else:
-    #         hold = {'ObjectLockEnabled': 'Disable'}
-
-    #     # resp = b2.put_object_lock_configuration(Bucket=bucket, ObjectLockConfiguration=hold)
-    #     b2resp = utils.B2Response(self._client, 'put_object_lock_configuration', Bucket=self.bucket, ObjectLockConfiguration=hold)
-
-    #     return b2resp
 
 
     def b2lock(self, key: str):

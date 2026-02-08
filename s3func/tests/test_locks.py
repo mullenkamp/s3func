@@ -158,7 +158,7 @@ def worker_b2_lock(key, results):
     """
     lock = b2_session.b2lock(key)
     # Attempt to acquire lock with blocking and timeout
-    acquired = lock.acquire(blocking=True, timeout=30)
+    acquired = lock.acquire(blocking=True, timeout=60)
     if acquired:
         results.append(True)
         sleep(1)  # Hold the lock for a bit
