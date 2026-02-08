@@ -6,19 +6,11 @@ Created on May 13 08:04:38 2024
 @author: mike
 """
 import io
-# import os
-# from pydantic import HttpUrl
 from typing import List, Union
 import boto3
 import botocore
 import copy
-# import requests
-# import urllib.parse
-# from urllib3.util import Retry, Timeout
-# import datetime
 import hashlib
-# from requests import Session
-# from requests.adapters import HTTPAdapter
 import urllib3
 import uuid
 from time import sleep
@@ -159,9 +151,9 @@ class S3Lock:
             self.lock_id = lock_id
             if objs:
                 for obj in objs:
-                    key = obj['key']
-                    if lock_id in key:
-                        seq = int(key[-1])
+                    obj_key_name = obj['key']
+                    if lock_id in obj_key_name:
+                        seq = int(obj_key_name[-1])
                         version_ids[seq] = obj['version_id']
                         if seq == 1:
                             timestamp = obj['upload_timestamp']
@@ -190,12 +182,14 @@ class S3Lock:
 
         res = []
         for l in objs.iter_objects():
+            if not l.get('is_latest', True):
+                continue
             if l['etag'] == md5_locks['exclusive']:
                 l['lock_type'] = 'exclusive'
             elif l['etag'] == md5_locks['shared']:
                 l['lock_type'] = 'shared'
             else:
-                raise ValueError('This lock file was created by something else...')
+                continue
             res.append(l)
 
         return res
@@ -381,7 +375,7 @@ class S3Lock:
             return False
 
 
-    def aquire(self, blocking=True, timeout=-1, exclusive=True):
+    def acquire(self, blocking=True, timeout=-1, exclusive=True):
         """
         Acquire a lock, blocking or non-blocking.
 
@@ -446,7 +440,7 @@ class S3Lock:
             self._timestamp = None
 
     def __enter__(self):
-        self.aquire()
+        self.acquire()
 
     def __exit__(self, *args):
         self.release()
