@@ -325,58 +325,6 @@ def test_s3_delete_objects():
     assert not found_key
 
 
-def test_S3Lock():
-    """
-
-    """
-    s3lock = s3_session.s3lock(obj_key)
-
-    other_locks = s3lock.other_locks()
-
-    assert isinstance(other_locks, dict)
-
-    if other_locks:
-        _ = s3lock.break_other_locks()
-
-    assert not s3lock.locked()
-
-    assert s3lock.aquire()
-
-    assert s3lock.locked()
-
-    s3lock.release()
-
-    assert not s3lock.locked()
-
-    with s3lock:
-        assert s3lock.locked()
-
-    assert not s3lock.locked()
-
-
-def s3lock_loop():
-    """
-
-    """
-    s3lock = s3_session.s3lock(obj_key)
-
-    for i in range(100):
-        print(i)
-        with s3lock:
-            mod_date = s3lock._timestamp
-            others = s3lock.other_locks()
-            if others:
-                for other_one, obj in others.items():
-                    if 1 in obj:
-                        if obj[1] < mod_date:
-                            print(('Other mod date was earlier.'))
-                            # raise ValueError('Other mod date was earlier.')
-
-
-####################################################
-### B2
-
-
 def test_b2_put_object():
     """
 
@@ -477,34 +425,6 @@ def test_b2_delete_objects():
 
     assert not found_key
 
-
-def test_B2Lock():
-    """
-
-    """
-    s3lock = b2_session.b2lock(obj_key)
-
-    other_locks = s3lock.other_locks()
-
-    assert isinstance(other_locks, dict)
-
-    if other_locks:
-        _ = s3lock.break_other_locks()
-
-    assert not s3lock.locked()
-
-    assert s3lock.aquire()
-
-    assert s3lock.locked()
-
-    s3lock.release()
-
-    assert not s3lock.locked()
-
-    with s3lock:
-        assert s3lock.locked()
-
-    assert not s3lock.locked()
 
 # def resp_delay_test(n):
 #     """

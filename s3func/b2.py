@@ -7,10 +7,7 @@ Created on May 13 08:04:38 2024
 """
 import io
 from typing import List, Union
-# import requests
 import urllib.parse
-# from requests import Session
-# from requests.adapters import HTTPAdapter
 import hashlib
 import urllib3
 import orjson
@@ -19,6 +16,7 @@ import uuid
 from time import sleep
 from timeit import default_timer
 import datetime
+import weakref
 from threading import current_thread
 # import b2sdk.v2 as b2
 # from b2sdk._internal.session import B2Session
@@ -111,6 +109,20 @@ def get_authorization(application_key_id, application_key, session):
     return resp
 
 
+def release_b2_lock(obj_lock_key, lock_id, version_ids, b2_session_kwargs):
+    """
+    Made for the creation of finalize objects to ensure that the lock is released if something goes wrong.
+    """
+    session = B2Session(**b2_session_kwargs)
+    for seq, version_id in version_ids.items():
+        if version_id:
+            obj_name = obj_lock_key + f'{lock_id}-{seq}'
+            try:
+                _ = session.delete_object(obj_name, version_id)
+            except:
+                pass
+
+
 #######################################################
 ### Other classes
 
@@ -148,7 +160,7 @@ class B2Lock:
         obj_lock_key = key + '.lock.'
         objs = self._list_objects(session, obj_lock_key)
 
-        version_ids = {0: '', 1: ''}
+        version_ids = {0: None, 1: None}
         timestamp = None
 
         if lock_id is None:
@@ -157,9 +169,9 @@ class B2Lock:
             self.lock_id = lock_id
             if objs:
                 for obj in objs:
-                    key = obj['key']
-                    if lock_id in key:
-                        seq = int(key[-1])
+                    obj_key_name = obj['key']
+                    if lock_id in obj_key_name:
+                        seq = int(obj_key_name[-1])
                         version_ids[seq] = obj['version_id']
                         if seq == 1:
                             timestamp = obj['last_modified']
@@ -182,7 +194,7 @@ class B2Lock:
             key = obj_lock_key + lock_id
         else:
             key = obj_lock_key
-        objs = session.list_object_versions(prefix=key)
+        objs = session.list_objects(prefix=key)
         if objs.status in (401, 403):
             raise urllib3.exceptions.HTTPError(str(objs.error)[1:-1])
 
@@ -193,7 +205,7 @@ class B2Lock:
             elif l['content_md5'] == md5_locks['shared']:
                 l['lock_type'] = 'shared'
             else:
-                raise ValueError('This lock file was created by something else...')
+                continue
             res.append(l)
 
         return res
@@ -231,24 +243,6 @@ class B2Lock:
         return res
 
 
-    def _delete_lock_object(self, session, seq):
-        """
-
-        """
-        obj_name = self._obj_lock_key + f'{self.lock_id}-{seq}'
-        _ = session.delete_object(obj_name, self._version_ids[seq])
-        self._version_ids[seq] = ''
-        self._timestamp = None
-
-
-    def _delete_lock_objects(self, session):
-        """
-
-        """
-        for seq in (0, 1):
-            self._delete_lock_object(session, seq)
-
-
     def _put_lock_objects(self, session, body):
         """
 
@@ -261,11 +255,11 @@ class B2Lock:
                 self._version_ids[seq] = resp.metadata['version_id']
                 self._timestamp = timestamp
             else:
-                if seq == 1:
-                    self._delete_lock_objects(session)
-                else:
-                    self._delete_lock_object(session, seq)
+                release_b2_lock(self._obj_lock_key, self.lock_id, self._version_ids, self._b2_session_kwargs)
                 raise urllib3.exceptions.HTTPError(str(resp.error)[1:-1])
+
+        ## Create finalizer object
+        self._finalizer = weakref.finalize(self, release_b2_lock, self._obj_lock_key, self.lock_id, self._version_ids, self._b2_session_kwargs)
 
 
     def _other_locks_timestamps(self, session):
@@ -348,7 +342,7 @@ class B2Lock:
                     _ = session.delete_object(l['key'], l['version_id'])
                     keys.append(l)
 
-        self._version_ids = {0: '', 1: ''}
+        self._version_ids = {0: None, 1: None}
         self._timestamp = None
 
         return keys
@@ -370,7 +364,7 @@ class B2Lock:
             return False
 
 
-    def aquire(self, blocking=True, timeout=-1, exclusive=True):
+    def acquire(self, blocking=True, timeout=-1, exclusive=True):
         """
         Acquire a lock, blocking or non-blocking.
 
@@ -414,7 +408,9 @@ class B2Lock:
                                 break
 
                 ## If the user makes it non-blocking or the timer runs out, the object version needs to be removed
-                self._delete_lock_objects(session)
+                self._finalizer()
+                self._version_ids = {0: None, 1: None}
+                self._timestamp = None
 
                 return False
             else:
@@ -428,11 +424,12 @@ class B2Lock:
         Release the lock. It can only release the lock that was created via this instance. Returns nothing.
         """
         if self._timestamp is not None:
-            session = B2Session(**self._b2_session_kwargs)
-            self._delete_lock_objects(session)
+            self._finalizer()
+            self._version_ids = {0: None, 1: None}
+            self._timestamp = None
 
     def __enter__(self):
-        self.aquire()
+        self.acquire()
 
     def __exit__(self, *args):
         self.release()
