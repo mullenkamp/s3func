@@ -14,7 +14,7 @@ classifiers = [
     "Programming Language :: Python :: 3 :: Only",
 ]
 requires-python = ">=3.9"
-dependencies = ['awssig',
+dependencies = [
                 'urllib3>=2',
                 'orjson',
 ]
