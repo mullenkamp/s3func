@@ -11,8 +11,8 @@ import urllib.parse
 from urllib3.util import Retry, Timeout
 import urllib3
 
-from . import utils
-# import utils
+from . import utils, response
+# import utils, response
 
 #######################################################
 ### Parameters
@@ -116,8 +116,8 @@ class HttpSession:
         if not utils.is_url(url):
             raise TypeError(f'{url} is not a proper http url.')
 
-        response = self._session.request('get', url, headers=headers, preload_content=not self._stream)
-        resp = utils.HttpResponse(response, self._stream)
+        resp = self._session.request('get', url, headers=headers, preload_content=not self._stream)
+        resp = response.HttpResponse(resp, self._stream)
 
         return resp
 
@@ -138,8 +138,8 @@ class HttpSession:
         if not utils.is_url(url):
             raise TypeError(f'{url} is not a proper http url.')
 
-        response = self._session.request('head', url)
-        resp = utils.HttpResponse(response, self._stream)
+        resp = self._session.request('head', url)
+        resp = response.HttpResponse(resp, self._stream)
 
         return resp
 
