@@ -5,6 +5,7 @@ import io
 import sys
 from time import sleep
 import concurrent.futures
+
 try:
     import tomllib as toml
 except ImportError:
@@ -55,9 +56,7 @@ def worker_lock(session, key, results):
 
 
 def test_B2Lock():
-    """
-
-    """
+    """ """
     b2_session = b2.B2Session(access_key_id, access_key)
 
     lock = b2_session.lock(obj_key)
@@ -102,7 +101,7 @@ def test_B2Lock_concurrency():
     """
     concurrency_key = uuid.uuid4().hex + '.concurrent'
     results = []
-    
+
     # Clean up any existing locks
     b2_session = b2.B2Session(access_key_id, access_key)
 
@@ -121,11 +120,8 @@ def test_B2Lock_concurrency():
     assert sum(results) == num_workers
 
 
-
 def test_S3Lock():
-    """
-
-    """
+    """ """
     s3_session = s3.S3Session(access_key_id, access_key, bucket, endpoint_url=endpoint_url)
 
     lock = s3_session.lock(obj_key)
@@ -159,7 +155,7 @@ def test_S3Lock_concurrency():
     """
     concurrency_key = uuid.uuid4().hex + '.concurrent'
     results = []
-    
+
     # Clean up any existing locks
     s3_session = s3.S3Session(access_key_id, access_key, bucket, endpoint_url=endpoint_url)
 
@@ -196,6 +192,3 @@ def test_S3Lock_concurrency():
 #                         if obj[1] < mod_date:
 #                             print(('Other mod date was earlier.'))
 #                             # raise ValueError('Other mod date was earlier.')
-
-
-

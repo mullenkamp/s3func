@@ -8,6 +8,7 @@ from timeit import default_timer
 from threading import current_thread
 import concurrent.futures
 import datetime
+
 try:
     import tomllib as toml
 except ImportError:
@@ -50,7 +51,7 @@ obj_key = uuid.uuid4().hex
 # obj_key = 'gwrc_flow_sensor_sites.gpkg'
 # obj_key = 'manual_test_key'
 base_url = 'https://b2.tethys-ts.xyz/file/' + bucket + '/'
-url = base_url +  obj_key
+url = base_url + obj_key
 obj_key_copy = obj_key + '.copy'
 
 # s3_client = s3.client(conn_config)
@@ -83,9 +84,6 @@ b2_session = b2.B2Session(access_key_id, access_key)
 # res.fetchone()
 # res = cur.execute("UPDATE account SET download_url='https://b2.tethys-ts.xyz'")
 # conn.commit()
-
-
-
 
 
 ################################################
@@ -142,9 +140,7 @@ def get_logs(request):
 
 
 def test_s3_put_object():
-    """
-
-    """
+    """ """
     ### Upload with bytes
     with io.open(script_path.joinpath(file_name), 'rb') as f:
         obj = f.read()
@@ -170,9 +166,7 @@ def test_s3_put_object():
 
 
 def test_s3_list_objects():
-    """
-
-    """
+    """ """
     count = 0
     found_key = False
     resp = s3_session.list_objects()
@@ -185,9 +179,7 @@ def test_s3_list_objects():
 
 
 def test_s3_list_object_versions():
-    """
-
-    """
+    """ """
     count = 0
     found_key = False
     resp = s3_session.list_object_versions()
@@ -200,9 +192,7 @@ def test_s3_list_object_versions():
 
 
 def test_s3_get_object():
-    """
-
-    """
+    """ """
     stream1 = s3_session.get_object(obj_key)
     data1 = stream1.stream.read()
 
@@ -213,9 +203,7 @@ def test_s3_get_object():
 
 
 def test_s3_copy_object():
-    """
-
-    """
+    """ """
     resp1 = s3_session.copy_object(obj_key, obj_key_copy)
 
     meta = resp1.metadata
@@ -231,9 +219,7 @@ def test_s3_copy_object():
 
 
 def test_http_url_get_object():
-    """
-
-    """
+    """ """
     stream1 = http_session.get_object(url)
     data1 = stream1.stream.read()
 
@@ -246,27 +232,21 @@ def test_http_url_get_object():
 
 
 def test_s3_head_object():
-    """
-
-    """
+    """ """
     response = s3_session.head_object(obj_key)
 
     assert 'version_id' in response.metadata
 
 
 def test_http_url_head_object():
-    """
-
-    """
+    """ """
     response = http_session.head_object(url)
 
     assert 'version_id' in response.metadata
 
 
 def test_s3_delete_objects():
-    """
-
-    """
+    """ """
     obj_keys = []
     resp = s3_session.list_object_versions()
     for js in resp.iter_objects():
@@ -285,9 +265,7 @@ def test_s3_delete_objects():
 
 
 def test_b2_put_object():
-    """
-
-    """
+    """ """
     ### Upload with bytes
     with io.open(script_path.joinpath(file_name), 'rb') as f:
         obj = f.read()
@@ -313,9 +291,7 @@ def test_b2_put_object():
 
 
 def test_b2_list_objects():
-    """
-
-    """
+    """ """
     count = 0
     found_key = False
     resp = b2_session.list_objects()
@@ -328,9 +304,7 @@ def test_b2_list_objects():
 
 
 def test_b2_list_object_versions():
-    """
-
-    """
+    """ """
     count = 0
     found_key = False
     resp = b2_session.list_object_versions()
@@ -343,9 +317,7 @@ def test_b2_list_object_versions():
 
 
 def test_b2_get_object():
-    """
-
-    """
+    """ """
     stream1 = b2_session.get_object(obj_key)
     data1 = stream1.stream.read()
 
@@ -356,18 +328,14 @@ def test_b2_get_object():
 
 
 def test_b2_head_object():
-    """
-
-    """
+    """ """
     response = b2_session.head_object(obj_key)
 
     assert 'version_id' in response.metadata
 
 
 def test_b2_delete_objects():
-    """
-
-    """
+    """ """
     # obj_keys = []
     resp = b2_session.list_object_versions()
     for js in resp.iter_objects():
@@ -415,60 +383,9 @@ def test_b2_delete_objects():
 #     return to_mod_time, to_header_time, to_return_time
 
 
-
 # def _save_test_results(to_mod_time, to_header_time, to_return_time):
 #     """
 
 #     """
 #     df1 = pd.DataFrame(zip(to_mod_time, to_header_time, to_return_time), columns=['to_mod_time', 'to_header_time', 'to_return_time'])
 #     df1.to_csv('put_object_timings.csv')
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
