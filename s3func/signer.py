@@ -65,7 +65,13 @@ class SigV4Auth:
         elif hasattr(body, 'read') and hasattr(body, 'seek'):
             # For file-like objects, read to hash and seek back
             pos = body.tell()
-            payload_hash = hashlib.sha256(body.read()).hexdigest()
+            sha256 = hashlib.sha256()
+            while True:
+                chunk = body.read(8192)
+                if not chunk:
+                    break
+                sha256.update(chunk)
+            payload_hash = sha256.hexdigest()
             body.seek(pos)
         else:
             payload_hash = 'UNSIGNED-PAYLOAD'  # Fallback

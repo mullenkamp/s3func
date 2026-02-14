@@ -18,6 +18,7 @@ from timeit import default_timer
 import datetime
 import weakref
 from threading import current_thread
+import concurrent.futures
 
 # import b2sdk.v2 as b2
 # from b2sdk._internal.session import B2Session
@@ -721,8 +722,12 @@ class B2Session:
         -------
         None
         """
-        for key_dict in keys:
-            _ = self.delete_object(key_dict['key'], key_dict['version_id'])
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+            futures = []
+            for key_dict in keys:
+                future = executor.submit(self.delete_object, key_dict['key'], key_dict['version_id'])
+                futures.append(future)
+            concurrent.futures.wait(futures)
 
     def copy_object(
         self,

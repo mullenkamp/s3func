@@ -60,18 +60,6 @@ pytest
 
 **Note:** Tests may require AWS credentials (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`) and an `ENDPOINT_URL` to be set in the environment if running integration tests against a real S3 endpoint.
 
-### Linting and Formatting
-
-The project uses `ruff` and `black` (configured in `pyproject.toml`).
-
-```bash
-# Run formatting
-uv run black .
-
-# Run linting
-uv run ruff check .
-```
-
 ## Key Components
 
 ### S3Session
