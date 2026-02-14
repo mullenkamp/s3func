@@ -229,7 +229,7 @@ class DistributedLock:
             if timeout > 0 and (default_timer() - start_time) > timeout:
                 break
 
-            sleep(2)
+            sleep(1)
 
         # Failed to acquire
         self.release()

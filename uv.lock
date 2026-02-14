@@ -2603,6 +2603,8 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "black" },
+    { name = "boto3", version = "1.7.84", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.10'" },
+    { name = "boto3", version = "1.42.49", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.10'" },
     { name = "moto", version = "1.3.6", source = { registry = "https://pypi.org/simple" }, extra = ["server"], marker = "python_full_version < '3.10'" },
     { name = "moto", version = "5.1.21", source = { registry = "https://pypi.org/simple" }, extra = ["s3", "server"], marker = "python_full_version >= '3.10'" },
     { name = "mypy" },
@@ -2621,6 +2623,7 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "black" },
+    { name = "boto3" },
     { name = "moto", extras = ["s3", "server"], specifier = ">=1.3.6" },
     { name = "mypy" },
     { name = "pytest" },
