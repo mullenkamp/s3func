@@ -1,4 +1,5 @@
 """Simple functions for working with S3"""
+
 from s3func.s3 import S3Session
 from s3func.b2 import B2Session
 from s3func.locking import S3Lock, B2Lock

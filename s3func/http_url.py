@@ -6,24 +6,25 @@ Created on May 13 08:04:38 2024
 @author: mike
 """
 from typing import List, Union
+
 # import requests
 import urllib.parse
 from urllib3.util import Retry, Timeout
 import urllib3
 
 from . import utils, response
+
 # import utils, response
 
 #######################################################
 ### Parameters
 
 
-
 ##################################################
 ### Functions
 
 
-def session(max_connections: int = 10, max_attempts: int=3, timeout: int=120):
+def session(max_connections: int = 10, max_attempts: int = 3, timeout: int = 120):
     """
     Function to setup a urllib3 pool manager for url downloads.
 
@@ -44,16 +45,14 @@ def session(max_connections: int = 10, max_attempts: int=3, timeout: int=120):
     retries = Retry(
         total=max_attempts,
         backoff_factor=1,
-        )
+    )
     http = urllib3.PoolManager(maxsize=max_connections, timeout=timeout, retries=retries, block=True)
 
     return http
 
 
 def join_url_key(key: str, base_url: str):
-    """
-
-    """
+    """ """
     if not base_url.endswith('/'):
         base_url += '/'
     url = urllib.parse.urljoin(base_url, key)
@@ -66,10 +65,9 @@ def join_url_key(key: str, base_url: str):
 
 
 class HttpSession:
-    """
+    """ """
 
-    """
-    def __init__(self, max_connections: int = 10, max_attempts: int=3, read_timeout: int=120, stream=True):
+    def __init__(self, max_connections: int = 10, max_attempts: int = 3, read_timeout: int = 120, stream=True):
         """
         Class using a urllib3 pool manager for url requests.
 
@@ -91,8 +89,7 @@ class HttpSession:
         self._stream = stream
         # self.buffer_size = buffer_size
 
-
-    def get_object(self, url: str, range_start: int=None, range_end: int=None):
+    def get_object(self, url: str, range_start: int = None, range_end: int = None):
         """
         Use a GET request to download the body and headers of a url.
 
@@ -121,7 +118,6 @@ class HttpSession:
 
         return resp
 
-
     def head_object(self, url: str):
         """
         Use a HEAD request to download the headers of a url.
@@ -142,73 +138,3 @@ class HttpSession:
         resp = response.HttpResponse(resp, self._stream)
 
         return resp
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

@@ -4,8 +4,10 @@ import datetime
 import urllib.parse
 from typing import Dict, Optional, Union
 
+
 def sign(key, msg):
     return hmac.new(key, msg.encode('utf-8'), hashlib.sha256).digest()
+
 
 def getSignatureKey(key, dateStamp, regionName, serviceName):
     kDate = sign(('AWS4' + key).encode('utf-8'), dateStamp)
@@ -13,6 +15,7 @@ def getSignatureKey(key, dateStamp, regionName, serviceName):
     kService = sign(kRegion, serviceName)
     kSigning = sign(kService, 'aws4_request')
     return kSigning
+
 
 class SigV4Auth:
     def __init__(self, access_key: str, secret_key: str, region: str, service: str = 's3'):
@@ -29,7 +32,7 @@ class SigV4Auth:
         parsed_url = urllib.parse.urlparse(url)
         host = parsed_url.netloc
         path = parsed_url.path or '/'
-        
+
         # Canonical Query String
         query_string = parsed_url.query
         canonical_query_string = ''
@@ -65,10 +68,10 @@ class SigV4Auth:
             payload_hash = hashlib.sha256(body.read()).hexdigest()
             body.seek(pos)
         else:
-            payload_hash = 'UNSIGNED-PAYLOAD' # Fallback
+            payload_hash = 'UNSIGNED-PAYLOAD'  # Fallback
 
         # Canonical Headers
-        # We MUST include the host header. urllib3 adds it at request time, 
+        # We MUST include the host header. urllib3 adds it at request time,
         # but for signing we need to know what it will be.
         # We force 'host' into our headers dict so urllib3 uses it (or overrides, but the signed value matches).
         headers['host'] = host
@@ -86,32 +89,24 @@ class SigV4Auth:
                 continue
             # Sign x-amz-*, host, and content-length/type
             if k_lower == 'host' or k_lower.startswith('x-amz-') or k_lower in ('content-length', 'content-type'):
-                v_trimmed = ' '.join(v.split()) # Remove extra whitespace
+                v_trimmed = ' '.join(v.split())  # Remove extra whitespace
                 canonical_headers_list.append(f"{k_lower}:{v_trimmed}")
                 signed_headers_list.append(k_lower)
-        
+
         canonical_headers = '\n'.join(canonical_headers_list) + '\n'
         signed_headers = ';'.join(signed_headers_list)
 
         # Canonical Request
-        canonical_request = '\n'.join([
-            request_method.upper(),
-            path,
-            canonical_query_string,
-            canonical_headers,
-            signed_headers,
-            payload_hash
-        ])
+        canonical_request = '\n'.join(
+            [request_method.upper(), path, canonical_query_string, canonical_headers, signed_headers, payload_hash]
+        )
 
         # String to Sign
         algorithm = 'AWS4-HMAC-SHA256'
         credential_scope = f"{datestamp}/{self.region}/{self.service}/aws4_request"
-        string_to_sign = '\n'.join([
-            algorithm,
-            amz_date,
-            credential_scope,
-            hashlib.sha256(canonical_request.encode('utf-8')).hexdigest()
-        ])
+        string_to_sign = '\n'.join(
+            [algorithm, amz_date, credential_scope, hashlib.sha256(canonical_request.encode('utf-8')).hexdigest()]
+        )
 
         # Calculate Signature
         signing_key = getSignatureKey(self.secret_key, datestamp, self.region, self.service)
@@ -122,5 +117,5 @@ class SigV4Auth:
             f"{algorithm} Credential={self.access_key}/{credential_scope}, "
             f"SignedHeaders={signed_headers}, Signature={signature}"
         )
-        
+
         headers['Authorization'] = authorization_header

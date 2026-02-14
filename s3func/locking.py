@@ -19,10 +19,7 @@ from . import b2, s3
 ### Parameters
 
 
-md5_locks = {
-    'shared': 'cfcd208495d565ef66e7dff9f98764da',
-    'exclusive': 'c4ca4238a0b923820dcc509a6f75849b'
-    }
+md5_locks = {'shared': 'cfcd208495d565ef66e7dff9f98764da', 'exclusive': 'c4ca4238a0b923820dcc509a6f75849b'}
 
 
 #######################################################
@@ -30,9 +27,7 @@ md5_locks = {
 
 
 def init_session(service, session_kwargs):
-    """
-
-    """
+    """ """
     if service == 's3':
         session = s3.S3Session(**session_kwargs)
     elif service == 'b2':
@@ -51,18 +46,18 @@ def release_lock(service, obj_lock_key, lock_id, version_ids, session_kwargs):
     for seq, version_id in version_ids.items():
         d = {'key': obj_lock_key + f'{lock_id}-{seq}'}
         if version_id is not None:
-             d['version_id'] = version_id
+            d['version_id'] = version_id
         del_dict.append(d)
-        
+
     if del_dict:
         session = init_session(service, session_kwargs)
         _ = session.delete_objects(del_dict)
 
 
-def init_lock(self, service: str, access_key_id: str, access_key: str, bucket: str, key: str, lock_id: str, session_kwargs):
-    """
-
-    """
+def init_lock(
+    self, service: str, access_key_id: str, access_key: str, bucket: str, key: str, lock_id: str, session_kwargs
+):
+    """ """
     self._session_kwargs = dict(access_key_id=access_key_id, access_key=access_key, bucket=bucket)
     self._session_kwargs.update(session_kwargs)
 
@@ -83,7 +78,9 @@ def init_lock(self, service: str, access_key_id: str, access_key: str, bucket: s
                 if seq == 1:
                     self._timestamp = obj['upload_timestamp']
         if self._timestamp:
-            self._finalizer = weakref.finalize(self, release_lock, service, self._obj_lock_key, self.lock_id, self._version_ids, self._session_kwargs)
+            self._finalizer = weakref.finalize(
+                self, release_lock, service, self._obj_lock_key, self.lock_id, self._version_ids, self._session_kwargs
+            )
             self.lock_id = lock_id
         else:
             raise ValueError(f'{lock_id} does not exist in the remote.')
@@ -96,7 +93,6 @@ def init_lock(self, service: str, access_key_id: str, access_key: str, bucket: s
     self._key = key
 
 
-
 ######################################################
 ### Classes
 
@@ -105,6 +101,7 @@ class DistributedLock:
     """
     Base class for distributed locks using object storage.
     """
+
     # def __init__(self, service: str, access_key_id: str, access_key: str, bucket: str, key: str, endpoint_url: str=None, lock_id: str=None, **session_kwargs):
     #     self._session_kwargs = dict(access_key_id=access_key_id, access_key=access_key, bucket=bucket, endpoint_url=endpoint_url)
     #     self._session_kwargs.update(session_kwargs)
@@ -138,12 +135,11 @@ class DistributedLock:
 
     #     self._key = key
 
-
     @staticmethod
     def _list_objects(session, obj_lock_key, lock_id=None):
         key = obj_lock_key + (lock_id if lock_id else "")
         objs = session.list_object_versions(prefix=key)
-        
+
         if objs.status in (401, 403):
             raise urllib3.exceptions.HTTPError(str(objs.error))
 
@@ -161,30 +157,27 @@ class DistributedLock:
 
         return res
 
-
     def _check_older_timestamp(self, timestamp_other, timestamp, lock_id, lock_id_other):
         if timestamp_other == timestamp:
             return lock_id_other < lock_id
         return timestamp_other < timestamp
-
 
     def _check_for_older_objs(self, objs, exclusive=False):
         locked = False
         for lock_id_other, obj in objs.items():
             if not exclusive and obj.get('lock_type') == 'shared':
                 continue
-            
+
             # Use timestamp from seq 1 if available, else seq 0
             ts_other = obj.get(1) or obj.get(0)
             locked = self._check_older_timestamp(ts_other, self._timestamp, self.lock_id, lock_id_other)
 
         return locked
 
-
     def _put_lock_objects(self, exclusive):
         session = init_session(self._service, self._session_kwargs)
         body = b'1' if exclusive else b'0'
-        
+
         for seq in (0, 1):
             obj_name = self._obj_lock_key + f'{self.lock_id}-{seq}'
             resp = session.put_object(obj_name, body)
@@ -197,16 +190,18 @@ class DistributedLock:
                 release_lock(self._service, self._obj_lock_key, self.lock_id, self._version_ids, self._session_kwargs)
                 raise urllib3.exceptions.HTTPError(f"Failed to put lock object: {resp.error}")
 
-        self._finalizer = weakref.finalize(self, release_lock, self._service, self._obj_lock_key, self.lock_id, self._version_ids, self._session_kwargs)
-
+        self._finalizer = weakref.finalize(
+            self, release_lock, self._service, self._obj_lock_key, self.lock_id, self._version_ids, self._session_kwargs
+        )
 
     def _list_other_locks(self):
         session = init_session(self._service, self._session_kwargs)
         objs = self._list_objects(session, self._obj_lock_key)
         other_locks = {}
         for l in objs:
-            parts = l['key'][self._obj_lock_key_len:].split('-')
-            if len(parts) != 2: continue
+            parts = l['key'][self._obj_lock_key_len :].split('-')
+            if len(parts) != 2:
+                continue
             lock_id, seq = parts
             if lock_id != self.lock_id:
                 if lock_id not in other_locks:
@@ -214,27 +209,26 @@ class DistributedLock:
                 other_locks[lock_id][int(seq)] = l['upload_timestamp']
         return other_locks
 
-
     def acquire(self, blocking=True, timeout=-1, exclusive=True):
         if self._timestamp is not None:
             return True
 
         self._put_lock_objects(exclusive)
-        
+
         start_time = default_timer()
         while True:
             objs = self._list_other_locks()
             locked = self._check_for_older_objs(objs, exclusive)
-            
+
             if not locked:
                 return True
-            
+
             if not blocking:
                 break
-                
+
             if timeout > 0 and (default_timer() - start_time) > timeout:
                 break
-                
+
             sleep(2)
 
         # Failed to acquire
@@ -261,8 +255,9 @@ class DistributedLock:
         objs = self._list_objects(session, self._obj_lock_key)
         other_locks = {}
         for l in objs:
-            parts = l['key'][self._obj_lock_key_len:].split('-')
-            if len(parts) != 2: continue
+            parts = l['key'][self._obj_lock_key_len :].split('-')
+            if len(parts) != 2:
+                continue
             lock_id, seq = parts
             if lock_id != self.lock_id:
                 other_locks[lock_id] = {
@@ -272,12 +267,12 @@ class DistributedLock:
                 }
         return other_locks
 
-    def break_other_locks(self, timestamp: str | datetime.datetime=None):
+    def break_other_locks(self, timestamp: str | datetime.datetime = None):
         if timestamp is None:
-           timestamp = datetime.datetime.now(datetime.timezone.utc)
+            timestamp = datetime.datetime.now(datetime.timezone.utc)
         elif isinstance(timestamp, str):
             timestamp = datetime.datetime.fromisoformat(timestamp).astimezone(datetime.timezone.utc)
-        
+
         session = init_session(self._service, self._session_kwargs)
         objs = self._list_objects(session, self._obj_lock_key)
         keys = []
@@ -298,7 +293,10 @@ class S3Lock(DistributedLock):
     """
     S3 implementation of DistributedLock.
     """
-    def __init__(self, access_key_id: str, access_key: str, bucket: str, key: str, lock_id: str=None, **session_kwargs):
+
+    def __init__(
+        self, access_key_id: str, access_key: str, bucket: str, key: str, lock_id: str = None, **session_kwargs
+    ):
         init_lock(self, 's3', access_key_id, access_key, bucket, key, lock_id, session_kwargs)
 
 
@@ -306,41 +304,8 @@ class B2Lock(DistributedLock):
     """
     B2 implementation of DistributedLock.
     """
-    def __init__(self, access_key_id: str, access_key: str, bucket: str, key: str, lock_id: str=None, **session_kwargs):
+
+    def __init__(
+        self, access_key_id: str, access_key: str, bucket: str, key: str, lock_id: str = None, **session_kwargs
+    ):
         init_lock(self, 'b2', access_key_id, access_key, bucket, key, lock_id, session_kwargs)
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
