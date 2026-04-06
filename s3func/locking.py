@@ -138,13 +138,23 @@ class DistributedLock:
     @staticmethod
     def _list_objects(session, obj_lock_key, lock_id=None):
         key = obj_lock_key + (lock_id if lock_id else "")
-        objs = session.list_object_versions(prefix=key)
 
-        if objs.status in (401, 403):
-            raise urllib3.exceptions.HTTPError(str(objs.error))
+        # Try list_object_versions first; fall back to list_objects
+        # for providers that don't support versioning (e.g. Mega S3)
+        objs = session.list_object_versions(prefix=key)
+        try:
+            items = list(objs.iter_objects())
+        except urllib3.exceptions.HTTPError as e:
+            if '501' in str(e):
+                objs = session.list_objects(prefix=key)
+                items = list(objs.iter_objects())
+            elif '401' in str(e) or '403' in str(e):
+                raise
+            else:
+                raise
 
         res = []
-        for l in objs.iter_objects():
+        for l in items:
             if not l.get('is_latest', True):
                 continue
             if l.get('content_md5') == md5_locks['exclusive']:
@@ -278,7 +288,10 @@ class DistributedLock:
         keys = []
         for l in objs:
             if l['upload_timestamp'] <= timestamp:
-                keys.append({'key': l['key'], 'version_id': l['version_id']})
+                d = {'key': l['key']}
+                if l.get('version_id'):
+                    d['version_id'] = l['version_id']
+                keys.append(d)
         if keys:
             session.delete_objects(keys)
 

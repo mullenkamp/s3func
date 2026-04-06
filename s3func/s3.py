@@ -380,9 +380,9 @@ class S3Session:
                 else:
                     raise ValueError('"key" must be passed in the list of dict.')
 
-                if 'version_id' in k:
+                if k.get('version_id'):
                     ET.SubElement(obj, 'VersionId').text = k['version_id']
-                elif 'VersionId' in k:
+                elif k.get('VersionId'):
                     ET.SubElement(obj, 'VersionId').text = k['VersionId']
 
             body = ET.tostring(root, encoding='utf-8')

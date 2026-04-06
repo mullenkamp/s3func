@@ -94,7 +94,7 @@ class SigV4Auth:
             if k_lower == 'authorization':
                 continue
             # Sign x-amz-*, host, and content-length/type
-            if k_lower == 'host' or k_lower.startswith('x-amz-') or k_lower in ('content-length', 'content-type'):
+            if k_lower == 'host' or k_lower.startswith('x-amz-') or k_lower in ('content-length', 'content-type', 'content-md5'):
                 v_trimmed = ' '.join(v.split())  # Remove extra whitespace
                 canonical_headers_list.append(f"{k_lower}:{v_trimmed}")
                 signed_headers_list.append(k_lower)

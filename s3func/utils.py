@@ -303,8 +303,7 @@ def add_metadata_from_s3_xml(response, method=None):
     """
     # Parse Headers first (common to all)
     metadata = add_metadata_from_urllib3(response)
-    if 'x-amz-version-id' in response.headers:
-        metadata['version_id'] = response.headers['x-amz-version-id']
+    metadata['version_id'] = response.headers.get('x-amz-version-id')
 
     # Timestamp extraction
     # Try Last-Modified, then Date, then current time as fallback (though risky for locks)
