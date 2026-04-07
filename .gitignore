@@ -115,3 +115,4 @@ s3func/tests/s3_config.toml
 s3func/tests/auth_file.sqlite
 
 .ruff*
+*.csv

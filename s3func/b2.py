@@ -595,18 +595,38 @@ class B2Session:
 
         return b2resp
 
-    def delete_objects(self, keys: List[dict]):
+    def delete_objects(self, keys: Union[List[str], List[dict]], purge: bool = True):
         """
-        keys must be a list of dictionaries. The dicts must have the keys named key and version_id derived from the list_object_versions method. The B2 API has no bulk deletion call, so the deletes will be performed serially.
+        Delete multiple objects from a B2 bucket.
+
+        Parameters
+        ----------
+        keys : list of str or list of dict
+            Either a list of key strings (e.g. ['foo.bin', 'bar.bin']) or a list of
+            dicts with 'key' and optionally 'version_id' fields.
+        purge : bool
+            If True (default), all versions of each object are deleted. If False,
+            version_id is required in each dict and only those specific versions
+            are deleted.
 
         Returns
         -------
         None
         """
+        # Normalize input: strings -> dicts
+        if keys and isinstance(keys[0], str):
+            keys = [{'key': k} for k in keys]
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             futures = []
             for key_dict in keys:
-                future = executor.submit(self.delete_object, key_dict['key'], key_dict['version_id'])
+                key_name = key_dict.get('key') or key_dict.get('Key')
+                version_id = key_dict.get('version_id') or key_dict.get('VersionId')
+                if purge and not version_id:
+                    # delete_object with version_id=None lists and deletes all versions
+                    future = executor.submit(self.delete_object, key_name, None)
+                else:
+                    future = executor.submit(self.delete_object, key_name, version_id)
                 futures.append(future)
             concurrent.futures.wait(futures)
 

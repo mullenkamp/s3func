@@ -352,14 +352,50 @@ class S3Session:
 
         return s3resp
 
-    def delete_objects(self, keys: List[dict]):
+    def delete_objects(self, keys: Union[List[str], List[dict]], purge: bool = True):
         """
-        keys must be a list of dictionaries. The dicts must have the keys named key and version_id derived from the list_object_versions method. This function will automatically separate the list into 1000 count list chunks (required by the delete_objects request).
+        Delete multiple objects from an S3 bucket.
+
+        Parameters
+        ----------
+        keys : list of str or list of dict
+            Either a list of key strings (e.g. ['foo.bin', 'bar.bin']) or a list of
+            dicts with 'key' and optionally 'version_id' fields.
+        purge : bool
+            If True (default), all versions of each object are deleted by listing
+            versions first. If False, objects are deleted without version IDs
+            (which only adds a delete marker on versioned buckets).
 
         Returns
         -------
         None
         """
+        # Normalize input: strings -> dicts
+        if keys and isinstance(keys[0], str):
+            keys = [{'key': k} for k in keys]
+
+        # If purge, resolve version IDs for keys that don't have them
+        if purge:
+            resolved = []
+            for k in keys:
+                key_name = k.get('key') or k.get('Key')
+                version_id = k.get('version_id') or k.get('VersionId')
+                if version_id:
+                    resolved.append(k)
+                else:
+                    try:
+                        resp = self.list_object_versions(prefix=key_name)
+                        found = False
+                        for obj in resp.iter_objects():
+                            if obj['key'] == key_name:
+                                resolved.append({'key': obj['key'], 'version_id': obj['version_id']})
+                                found = True
+                        if not found:
+                            resolved.append(k)
+                    except Exception:
+                        resolved.append(k)
+            keys = resolved
+
         # S3 Delete Objects requires a specific XML payload
         # <Delete><Object><Key>...</Key><VersionId>...</VersionId></Object>...</Delete>
         url = urllib.parse.urljoin(self._endpoint_url, f"{self.bucket}")
@@ -367,7 +403,6 @@ class S3Session:
         for keys_chunk in utils.chunks(keys, 1000):
             # Build XML
             root = ET.Element('Delete', xmlns="http://s3.amazonaws.com/doc/2006-03-01/")
-            # Quiet mode? Original used Quiet=True
             quiet = ET.SubElement(root, 'Quiet')
             quiet.text = 'true'
 
@@ -387,16 +422,11 @@ class S3Session:
 
             body = ET.tostring(root, encoding='utf-8')
 
-            # Subresource ?delete
             query_params = {'delete': ''}
-
-            # Content-MD5 is often required for DeleteObjects for integrity, but let's try without first or add if needed.
-            # SigV4 protects integrity too.
 
             md5 = base64.b64encode(hashlib.md5(body).digest()).decode('utf-8')
             headers = {'Content-MD5': md5, 'Content-Type': 'application/xml'}
 
-            # Delete objects response is small, preload it
             self.request('POST', url, headers=headers, fields=query_params, body=body, preload_content=True)
 
     def copy_object(

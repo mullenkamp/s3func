@@ -100,6 +100,19 @@ def test_mock_s3_delete_objects(s3_session):
     assert not found
 
 
+def test_mock_s3_delete_objects_string_keys(s3_session):
+    """delete_objects accepts a list of key strings."""
+    keys = [f"delete-str-{uuid.uuid4().hex}-{i}" for i in range(3)]
+    for key in keys:
+        s3_session.put_object(key, b"data")
+
+    s3_session.delete_objects(keys)
+
+    listed = {obj['key'] for obj in s3_session.list_objects().iter_objects()}
+    for key in keys:
+        assert key not in listed
+
+
 def test_mock_s3_copy_object(s3_session):
     src_key = "src-key"
     dest_key = "dest-key"

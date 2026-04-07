@@ -119,22 +119,8 @@ def test_s3_copy_object(s3_session, s3_test_key):
 
 
 def test_s3_delete_objects(s3_session, s3_test_key):
-    """Delete test objects and verify removal."""
-    import urllib3
-
-    # Try versioned delete first, fall back to simple delete
-    try:
-        obj_keys = []
-        for js in s3_session.list_object_versions().iter_objects():
-            if js['key'] == s3_test_key:
-                obj_keys.append({'key': js['key'], 'version_id': js['version_id']})
-        if obj_keys:
-            s3_session.delete_objects(obj_keys)
-    except urllib3.exceptions.HTTPError as e:
-        if '501' in str(e):
-            s3_session.delete_object(s3_test_key)
-        else:
-            raise
+    """Delete test objects (with purge) and verify removal."""
+    s3_session.delete_objects([s3_test_key])
 
     found_key = False
     for js in s3_session.list_objects().iter_objects():
