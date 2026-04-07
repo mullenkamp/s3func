@@ -113,6 +113,41 @@ def test_mock_s3_delete_objects_string_keys(s3_session):
         assert key not in listed
 
 
+def test_mock_s3_delete_objects_prefix(s3_session):
+    """delete_objects with prefix deletes all objects under that prefix."""
+    prefix = f"prefix-test-{uuid.uuid4().hex}/"
+    keys = [f"{prefix}a", f"{prefix}b", f"{prefix}c"]
+    for key in keys:
+        s3_session.put_object(key, b"data")
+
+    s3_session.delete_objects(prefix=prefix)
+
+    listed = {obj['key'] for obj in s3_session.list_objects(prefix=prefix).iter_objects()}
+    assert len(listed) == 0
+
+
+def test_mock_s3_delete_objects_prefix_purge(s3_session):
+    """delete_objects with prefix and purge=True removes all versions."""
+    prefix = f"prefix-purge-{uuid.uuid4().hex}/"
+    key = f"{prefix}obj"
+    s3_session.put_object(key, b"v1")
+    s3_session.put_object(key, b"v2")
+
+    s3_session.delete_objects(prefix=prefix, purge=True)
+
+    versions = list(s3_session.list_object_versions(prefix=prefix).iter_objects())
+    assert len(versions) == 0
+
+
+def test_mock_s3_delete_objects_mutual_exclusion(s3_session):
+    """Passing both keys and prefix raises ValueError."""
+    with pytest.raises(ValueError):
+        s3_session.delete_objects(keys=['a'], prefix='b/')
+
+    with pytest.raises(ValueError):
+        s3_session.delete_objects()
+
+
 def test_mock_s3_copy_object(s3_session):
     src_key = "src-key"
     dest_key = "dest-key"

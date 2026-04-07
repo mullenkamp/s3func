@@ -595,15 +595,18 @@ class B2Session:
 
         return b2resp
 
-    def delete_objects(self, keys: Union[List[str], List[dict]], purge: bool = True):
+    def delete_objects(self, keys: Union[List[str], List[dict]] = None, prefix: str = None, purge: bool = True):
         """
         Delete multiple objects from a B2 bucket.
 
         Parameters
         ----------
-        keys : list of str or list of dict
+        keys : list of str or list of dict, optional
             Either a list of key strings (e.g. ['foo.bin', 'bar.bin']) or a list of
             dicts with 'key' and optionally 'version_id' fields.
+            Mutually exclusive with prefix.
+        prefix : str, optional
+            Delete all objects matching this prefix. Mutually exclusive with keys.
         purge : bool
             If True (default), all versions of each object are deleted. If False,
             version_id is required in each dict and only those specific versions
@@ -613,9 +616,21 @@ class B2Session:
         -------
         None
         """
-        # Normalize input: strings -> dicts
-        if keys and isinstance(keys[0], str):
-            keys = [{'key': k} for k in keys]
+        if keys is not None and prefix is not None:
+            raise ValueError('keys and prefix are mutually exclusive.')
+        if keys is None and prefix is None:
+            raise ValueError('Either keys or prefix must be provided.')
+
+        if prefix is not None:
+            if purge:
+                resp = self.list_object_versions(prefix=prefix)
+            else:
+                resp = self.list_objects(prefix=prefix)
+            keys = [{'key': obj['key'], 'version_id': obj.get('version_id')} for obj in resp.iter_objects()]
+        else:
+            # Normalize input: strings -> dicts
+            if keys and isinstance(keys[0], str):
+                keys = [{'key': k} for k in keys]
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             futures = []

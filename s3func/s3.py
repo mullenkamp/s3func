@@ -352,15 +352,18 @@ class S3Session:
 
         return s3resp
 
-    def delete_objects(self, keys: Union[List[str], List[dict]], purge: bool = True):
+    def delete_objects(self, keys: Union[List[str], List[dict]] = None, prefix: str = None, purge: bool = True):
         """
         Delete multiple objects from an S3 bucket.
 
         Parameters
         ----------
-        keys : list of str or list of dict
+        keys : list of str or list of dict, optional
             Either a list of key strings (e.g. ['foo.bin', 'bar.bin']) or a list of
             dicts with 'key' and optionally 'version_id' fields.
+            Mutually exclusive with prefix.
+        prefix : str, optional
+            Delete all objects matching this prefix. Mutually exclusive with keys.
         purge : bool
             If True (default), all versions of each object are deleted by listing
             versions first. If False, objects are deleted without version IDs
@@ -370,31 +373,65 @@ class S3Session:
         -------
         None
         """
-        # Normalize input: strings -> dicts
-        if keys and isinstance(keys[0], str):
-            keys = [{'key': k} for k in keys]
+        if keys is not None and prefix is not None:
+            raise ValueError('keys and prefix are mutually exclusive.')
+        if keys is None and prefix is None:
+            raise ValueError('Either keys or prefix must be provided.')
 
-        # If purge, resolve version IDs for keys that don't have them
-        if purge:
-            resolved = []
-            for k in keys:
-                key_name = k.get('key') or k.get('Key')
-                version_id = k.get('version_id') or k.get('VersionId')
-                if version_id:
-                    resolved.append(k)
-                else:
-                    try:
-                        resp = self.list_object_versions(prefix=key_name)
-                        found = False
-                        for obj in resp.iter_objects():
-                            if obj['key'] == key_name:
-                                resolved.append({'key': obj['key'], 'version_id': obj['version_id']})
-                                found = True
-                        if not found:
-                            resolved.append(k)
-                    except Exception:
+        if prefix is not None:
+            # List all objects under the prefix and collect for deletion
+            if purge:
+                try:
+                    resp = self.list_object_versions(prefix=prefix)
+                    items = list(resp.iter_objects())
+                except urllib3.exceptions.HTTPError as e:
+                    if '501' in str(e):
+                        resp = self.list_objects(prefix=prefix)
+                        items = list(resp.iter_objects())
+                    else:
+                        raise
+            else:
+                resp = self.list_objects(prefix=prefix)
+                items = list(resp.iter_objects())
+            keys = [{'key': obj['key'], 'version_id': obj.get('version_id')} for obj in items]
+        else:
+            # Normalize input: strings -> dicts
+            if keys and isinstance(keys[0], str):
+                keys = [{'key': k} for k in keys]
+
+            # If purge, resolve version IDs for keys that don't have them
+            if purge:
+                resolved = []
+                for k in keys:
+                    key_name = k.get('key') or k.get('Key')
+                    version_id = k.get('version_id') or k.get('VersionId')
+                    if version_id:
                         resolved.append(k)
-            keys = resolved
+                    else:
+                        try:
+                            resp = self.list_object_versions(prefix=key_name)
+                            found = False
+                            for obj in resp.iter_objects():
+                                if obj['key'] == key_name:
+                                    resolved.append({'key': obj['key'], 'version_id': obj['version_id']})
+                                    found = True
+                            if not found:
+                                resolved.append(k)
+                        except urllib3.exceptions.HTTPError as e:
+                            if '501' in str(e):
+                                resp = self.list_objects(prefix=key_name)
+                                found = False
+                                for obj in resp.iter_objects():
+                                    if obj['key'] == key_name:
+                                        resolved.append({'key': obj['key']})
+                                        found = True
+                                if not found:
+                                    resolved.append(k)
+                            else:
+                                resolved.append(k)
+                        except Exception:
+                            resolved.append(k)
+                keys = resolved
 
         # S3 Delete Objects requires a specific XML payload
         # <Delete><Object><Key>...</Key><VersionId>...</VersionId></Object>...</Delete>
