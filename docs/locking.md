@@ -26,22 +26,22 @@ A contender's "ticket" is **two tiny objects** under the lock prefix:
 
 ```mermaid
 flowchart TD
-    A["acquire()"] --> B{already won\nthe election?}
-    B -- yes --> W[return True]
-    B -- no --> C{ticket already exists?\n(recovered via lock_id=)}
-    C -- no --> D[PUT seq-0, seq-1\nticket objects]
-    C -- yes --> D2[reuse ticket - the election\nstill has to be run]
-    D --> E[Self-visibility gate:\nlist until OWN ticket visible]
+    A["acquire()"] --> B{"already won<br/>the election?"}
+    B -- yes --> W["return True"]
+    B -- no --> C{"ticket already exists?<br/>(recovered via lock_id=)"}
+    C -- no --> D["PUT seq-0, seq-1<br/>ticket objects"]
+    C -- yes --> D2["reuse ticket - the election<br/>still has to be run"]
+    D --> E["self-visibility gate:<br/>list until OWN ticket visible"]
     D2 --> E
-    E -- "timeout" --> X[release + raise:\nlisting can't be trusted]
-    E --> F[Election: evaluate_election\nover the parsed listing]
-    F -- TICKET_LOST --> Y[release + raise:\nticket was deleted/broken]
-    F -- WAIT --> G{blocking? timeout?}
-    G -- give up --> H[release, return False]
-    G -- keep going --> I[sleep 1s, re-list] --> F
-    F -- ACQUIRED --> J[sleep settle_delay,\nre-list once]
-    J --> K[Confirming election]
-    K -- ACQUIRED --> L[_acquired = True\nreturn True]
+    E -- timeout --> X["release + raise:<br/>listing can't be trusted"]
+    E --> F["election: evaluate_election<br/>over the parsed listing"]
+    F -- TICKET_LOST --> Y["release + raise:<br/>ticket was deleted/broken"]
+    F -- WAIT --> G{"blocking? timeout?"}
+    G -- "give up" --> H["release, return False"]
+    G -- "keep going" --> I["sleep 1s, re-list"] --> F
+    F -- ACQUIRED --> J["sleep settle_delay,<br/>re-list once"]
+    J --> K["confirming election"]
+    K -- ACQUIRED --> L["_acquired = True<br/>return True"]
     K -- TICKET_LOST --> Y
     K -- WAIT --> G
 ```

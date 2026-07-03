@@ -1,7 +1,7 @@
 # s3func
 
 <p align="center">
-    <em>Simple functions for working with S3 and B2</em>
+    <em>Simple functions for working with S3-compatible object storage</em>
 </p>
 
 [![build](https://github.com/mullenkamp/s3func/workflows/Build/badge.svg)](https://github.com/mullenkamp/s3func/actions)
@@ -10,13 +10,13 @@
 
 ---
 
-`s3func` is a lightweight Python library providing a simplified interface for interacting with S3-compatible object storage services and Backblaze B2. It removes the `boto3` dependency in favor of a fast, `urllib3`-based client with custom SigV4 signing.
+`s3func` is a lightweight Python library providing a simplified interface for interacting with S3-compatible object storage services (AWS S3, Backblaze B2, MEGA S4, and others). It removes the `boto3` dependency in favor of a fast, `urllib3`-based client with custom SigV4 signing.
 
 ## Key Features
 
 - **Zero Boto3 Dependency**: Minimal overhead and faster imports.
-- **S3 & B2 Support**: Unified interface for both AWS S3 (and compatible) and Backblaze B2 native API.
-- **Distributed Locking**: Robust shared and exclusive locking mechanism using object storage.
+- **Provider-Agnostic**: One `S3Session` for AWS S3 and any S3-compatible provider (Backblaze B2, MEGA S4, ...), with provider quirks handled portably (strict RFC3986 signing of paths and queries).
+- **Distributed Locking**: Verified shared/exclusive locking on plain object storage - no CAS required (see [docs/locking.md](docs/locking.md)).
 - **Streaming Support**: Efficiently stream large objects.
 - **Automatic Retries**: Built-in adaptive retry logic for transient network issues.
 
@@ -79,27 +79,6 @@ resp = session.head_object('data.csv')
 print(resp.metadata['processed']) # 'false'
 ```
 
-### Backblaze B2 Operations
-
-> **Deprecated (0.9.0, removal in 1.0):** the B2 native API offers no capability or
-> performance advantage over B2's S3-compatible endpoint (measured: native version
-> listing is slower and no more consistent). Use `S3Session` with your B2
-> S3-compatible endpoint instead. `B2Session`/`B2Lock` now emit `DeprecationWarning`.
-
-```python
-from s3func import B2Session
-
-# Initialize B2 session
-session = B2Session(
-    access_key_id='YOUR_APPLICATION_KEY_ID',
-    access_key='YOUR_APPLICATION_KEY',
-    bucket='my-b2-bucket'
-)
-
-# Put object
-session.put_object('data.json', b'{"status": "ok"}', content_type='application/json')
-```
-
 ### Distributed Locking
 
 `s3func` provides a powerful distributed lock that mimics Python's `threading.Lock` API.
@@ -123,10 +102,11 @@ if lock.acquire(blocking=True, timeout=10):
 ## Performance Tips
 
 - **Streaming**: Set `stream=True` in the session (default) or individual requests to handle large files without loading them entirely into memory.
-- **B2 Authorization Caching**: `s3func` automatically caches B2 authorization tokens globally for up to 1 hour, significantly reducing latency for concurrent operations.
 - **Adaptive Retries**: The library uses `urllib3` retry logic configured for high-concurrency environments to handle rate limiting and network blips automatically.
 
 ## How Distributed Locking Works
+
+Full walk-through with diagrams: [docs/locking.md](docs/locking.md).
 
 The lock is a Lamport-bakery-style election over plain object storage (no
 compare-and-swap needed):
