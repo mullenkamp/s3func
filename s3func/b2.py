@@ -6,6 +6,7 @@ Created on May 13 08:04:38 2024
 @author: mike
 """
 import io
+import warnings
 from typing import List, Union
 import urllib.parse
 import hashlib
@@ -131,125 +132,6 @@ def release_b2_lock(obj_lock_key, lock_id, version_ids, b2_session_kwargs):
 #######################################################
 ### Other classes
 
-
-# class B2Lock(locking.DistributedLock):
-#     """
-#     B2 implementation of DistributedLock.
-#     """
-#     def __init__(self, access_key_id: str, access_key: str, bucket: str, key: str, lock_id: str=None, **b2_session_kwargs):
-#         super().__init__(key, lock_id)
-#         self._b2_session_kwargs = dict(access_key_id=access_key_id, access_key=access_key, bucket=bucket)
-#         self._b2_session_kwargs.update(b2_session_kwargs)
-
-#         self._obj_lock_key = key + '.lock.'
-#         self._obj_lock_key_len = len(self._obj_lock_key)
-
-#         # If lock_id was provided, check if it already exists to recover state
-#         if lock_id:
-#             session = B2Session(**self._b2_session_kwargs)
-#             objs = self._list_objects(session, self._obj_lock_key, lock_id)
-#             for obj in objs:
-#                 obj_key_name = obj['key']
-#                 if lock_id in obj_key_name:
-#                     seq = int(obj_key_name[-1])
-#                     self._version_ids[seq] = obj['version_id']
-#                     if seq == 1:
-#                         self._timestamp = obj.get('last_modified', obj['upload_timestamp'])
-#             if self._timestamp:
-#                 self._finalizer = weakref.finalize(self, release_b2_lock, self._obj_lock_key, self.lock_id, self._version_ids, self._b2_session_kwargs)
-
-#     @staticmethod
-#     def _list_objects(session, obj_lock_key, lock_id=None):
-#         key = obj_lock_key + (lock_id if lock_id else "")
-#         objs = session.list_objects(prefix=key)
-#         if objs.status in (401, 403):
-#             raise urllib3.exceptions.HTTPError(str(objs.error))
-
-#         res = []
-#         for l in objs.iter_objects():
-#             if l['content_md5'] == md5_locks['exclusive']:
-#                 l['lock_type'] = 'exclusive'
-#             elif l['content_md5'] == md5_locks['shared']:
-#                 l['lock_type'] = 'shared'
-#             else:
-#                 continue
-#             res.append(l)
-#         return res
-
-#     def _do_put_lock_objects(self, exclusive):
-#         session = B2Session(**self._b2_session_kwargs)
-#         body = b'1' if exclusive else b'0'
-
-#         # Consistent local timestamp for B2 last_modified metadata
-#         local_ts = datetime.datetime.now(datetime.timezone.utc)
-
-#         for seq in (0, 1):
-#             obj_name = self._obj_lock_key + f'{self.lock_id}-{seq}'
-#             resp = session.put_object(obj_name, body, last_modified=local_ts)
-#             if resp.status == 200:
-#                 self._version_ids[seq] = resp.metadata.get('version_id')
-#                 # Use server-side upload_timestamp for ordering to avoid clock skew issues
-#                 if seq == 0:
-#                     self._timestamp = resp.metadata['upload_timestamp']
-#             else:
-#                 release_b2_lock(self._obj_lock_key, self.lock_id, self._version_ids, self._b2_session_kwargs)
-#                 raise urllib3.exceptions.HTTPError(f"Failed to put lock object: {resp.error}")
-
-#         self._finalizer = weakref.finalize(self, release_b2_lock, self._obj_lock_key, self.lock_id, self._version_ids, self._b2_session_kwargs)
-
-#     def _do_list_other_locks(self):
-#         session = B2Session(**self._b2_session_kwargs)
-#         objs = self._list_objects(session, self._obj_lock_key)
-#         other_locks = {}
-#         for l in objs:
-#             parts = l['key'][self._obj_lock_key_len:].split('-')
-#             if len(parts) != 2: continue
-#             lock_id, seq = parts
-#             if lock_id != self.lock_id:
-#                 timestamp = l.get('last_modified', l['upload_timestamp'])
-#                 if lock_id not in other_locks:
-#                     other_locks[lock_id] = {'lock_type': l['lock_type']}
-#                 other_locks[lock_id][int(seq)] = timestamp
-#         return other_locks
-
-#     def other_locks(self):
-#         session = B2Session(**self._b2_session_kwargs)
-#         objs = self._list_objects(session, self._obj_lock_key)
-#         other_locks = {}
-#         for l in objs:
-#             parts = l['key'][self._obj_lock_key_len:].split('-')
-#             if len(parts) != 2: continue
-#             lock_id, seq = parts
-#             if lock_id != self.lock_id:
-#                 timestamp = l.get('last_modified', l['upload_timestamp'])
-#                 other_locks[lock_id] = {
-#                     'last_modified': timestamp,
-#                     'lock_type': l['lock_type'],
-#                     'owner': l.get('owner'),
-#                 }
-#         return other_locks
-
-#     def break_other_locks(self, timestamp: str | datetime.datetime=None):
-#         if timestamp is None:
-#            timestamp = datetime.datetime.now(datetime.timezone.utc)
-#         elif isinstance(timestamp, str):
-#             timestamp = datetime.datetime.fromisoformat(timestamp).astimezone(datetime.timezone.utc)
-
-#         session = B2Session(**self._b2_session_kwargs)
-#         objs = self._list_objects(session, self._obj_lock_key)
-#         keys = []
-#         for l in objs:
-#             timestamp_obj = l.get('last_modified', l['upload_timestamp'])
-#             if timestamp_obj <= timestamp:
-#                 _ = session.delete_object(l['key'], l['version_id'])
-#                 keys.append(l)
-#         return keys
-
-#     def locked(self):
-#         session = B2Session(**self._b2_session_kwargs)
-#         return len(self._list_objects(session, self._obj_lock_key)) > 0
-
-
 #######################################################
 ### Main class
 
@@ -289,7 +171,16 @@ class B2Session:
             An alternative download_url when downloading data. If None, the download_url will be retrieved from the initial b2 request. It should NOT include the file/ at the end of the url.
         stream : bool
             Should the connection stay open for streaming or should all the data/content be loaded during the initial request.
+
+        .. deprecated:: 0.9.0
+            The B2 native API offers no capability or performance advantage over
+            B2's S3-compatible endpoint. Use :class:`s3func.S3Session` instead.
         """
+        warnings.warn(
+            'B2Session (the B2 native API) is deprecated and will be removed in s3func 1.0 - '
+            'use S3Session with the B2 S3-compatible endpoint instead.',
+            DeprecationWarning, stacklevel=2,
+        )
         b2_session = http_url.session(max_connections, max_attempts, read_timeout)
 
         if isinstance(download_url, str):
@@ -714,18 +605,53 @@ class B2Session:
 
         return b2resp
 
-    def delete_objects(self, keys: List[dict]):
+    def delete_objects(self, keys: Union[List[str], List[dict]] = None, prefix: str = None, purge: bool = True):
         """
-        keys must be a list of dictionaries. The dicts must have the keys named key and version_id derived from the list_object_versions method. The B2 API has no bulk deletion call, so the deletes will be performed serially.
+        Delete multiple objects from a B2 bucket.
+
+        Parameters
+        ----------
+        keys : list of str or list of dict, optional
+            Either a list of key strings (e.g. ['foo.bin', 'bar.bin']) or a list of
+            dicts with 'key' and optionally 'version_id' fields.
+            Mutually exclusive with prefix.
+        prefix : str, optional
+            Delete all objects matching this prefix. Mutually exclusive with keys.
+        purge : bool
+            If True (default), all versions of each object are deleted. If False,
+            version_id is required in each dict and only those specific versions
+            are deleted.
 
         Returns
         -------
         None
         """
+        if keys is not None and prefix is not None:
+            raise ValueError('keys and prefix are mutually exclusive.')
+        if keys is None and prefix is None:
+            raise ValueError('Either keys or prefix must be provided.')
+
+        if prefix is not None:
+            if purge:
+                resp = self.list_object_versions(prefix=prefix)
+            else:
+                resp = self.list_objects(prefix=prefix)
+            keys = [{'key': obj['key'], 'version_id': obj.get('version_id')} for obj in resp.iter_objects()]
+        else:
+            # Normalize input: strings -> dicts
+            if keys and isinstance(keys[0], str):
+                keys = [{'key': k} for k in keys]
+
         with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
             futures = []
             for key_dict in keys:
-                future = executor.submit(self.delete_object, key_dict['key'], key_dict['version_id'])
+                key_name = key_dict.get('key') or key_dict.get('Key')
+                version_id = key_dict.get('version_id') or key_dict.get('VersionId')
+                if purge and not version_id:
+                    # delete_object with version_id=None lists and deletes all versions
+                    future = executor.submit(self.delete_object, key_name, None)
+                else:
+                    future = executor.submit(self.delete_object, key_name, version_id)
                 futures.append(future)
             concurrent.futures.wait(futures)
 

@@ -116,6 +116,16 @@ class S3Session:
         self._retry_mode = retry_mode
         self._read_timeout = read_timeout
 
+    def _object_url(self, key, bucket=None):
+        """
+        Build an object URL with the key percent-encoded exactly once. SigV4's
+        canonical URI is the encoded path, and servers canonicalize what they
+        receive - an unencoded special character (e.g. '!') on the wire makes
+        the two disagree and fails signature validation.
+        """
+        b = bucket or self.bucket
+        return urllib.parse.urljoin(self._endpoint_url, f"{b}/{urllib.parse.quote(key)}")
+
     def request(self, method, url, headers=None, fields=None, body=None, preload_content=None):
         """
         Wrapper to perform signed request via urllib3
@@ -129,7 +139,11 @@ class S3Session:
         # Sign request
         if fields:
             scheme, netloc, path, query, fragment = urllib.parse.urlsplit(url)
-            query_str = urllib.parse.urlencode(fields)
+            ## RFC3986 encoding (space -> %20, not '+'): the SigV4 canonical query
+            ## uses %20, and not every provider canonicalizes a wire '+' as a
+            ## space (MEGA S4 does not) - identical wire/canonical encoding is
+            ## the only portable choice.
+            query_str = urllib.parse.urlencode(fields, quote_via=urllib.parse.quote)
             if query:
                 query = f"{query}&{query_str}"
             else:
@@ -162,7 +176,7 @@ class S3Session:
         -------
         S3Response
         """
-        url = urllib.parse.urljoin(self._endpoint_url, f"{self.bucket}/{key}")
+        url = self._object_url(key)
 
         query_params, headers = utils.build_s3_params(
             self.bucket, key=key, version_id=version_id, range_start=range_start, range_end=range_end
@@ -190,7 +204,7 @@ class S3Session:
         -------
         S3Response
         """
-        url = urllib.parse.urljoin(self._endpoint_url, f"{self.bucket}/{key}")
+        url = self._object_url(key)
 
         query_params, headers = utils.build_s3_params(self.bucket, key=key, version_id=version_id)
 
@@ -241,7 +255,7 @@ class S3Session:
         if size > 2048:
             raise ValueError('metadata size is {size} bytes, but it must be under 2048 bytes.')
 
-        url = urllib.parse.urljoin(self._endpoint_url, f"{self.bucket}/{key}")
+        url = self._object_url(key)
 
         query_params, headers = utils.build_s3_params(
             self.bucket, key=key, metadata=metadata, content_type=content_type
@@ -341,7 +355,7 @@ class S3Session:
         -------
         S3Response
         """
-        url = urllib.parse.urljoin(self._endpoint_url, f"{self.bucket}/{key}")
+        url = self._object_url(key)
 
         query_params, headers = utils.build_s3_params(self.bucket, key=key, version_id=version_id)
 
@@ -352,14 +366,87 @@ class S3Session:
 
         return s3resp
 
-    def delete_objects(self, keys: List[dict]):
+    def delete_objects(self, keys: Union[List[str], List[dict]] = None, prefix: str = None, purge: bool = True):
         """
-        keys must be a list of dictionaries. The dicts must have the keys named key and version_id derived from the list_object_versions method. This function will automatically separate the list into 1000 count list chunks (required by the delete_objects request).
+        Delete multiple objects from an S3 bucket.
+
+        Parameters
+        ----------
+        keys : list of str or list of dict, optional
+            Either a list of key strings (e.g. ['foo.bin', 'bar.bin']) or a list of
+            dicts with 'key' and optionally 'version_id' fields.
+            Mutually exclusive with prefix.
+        prefix : str, optional
+            Delete all objects matching this prefix. Mutually exclusive with keys.
+        purge : bool
+            If True (default), all versions of each object are deleted by listing
+            versions first. If False, objects are deleted without version IDs
+            (which only adds a delete marker on versioned buckets).
 
         Returns
         -------
         None
         """
+        if keys is not None and prefix is not None:
+            raise ValueError('keys and prefix are mutually exclusive.')
+        if keys is None and prefix is None:
+            raise ValueError('Either keys or prefix must be provided.')
+
+        if prefix is not None:
+            # List all objects under the prefix and collect for deletion
+            if purge:
+                try:
+                    resp = self.list_object_versions(prefix=prefix)
+                    items = list(resp.iter_objects())
+                except urllib3.exceptions.HTTPError as e:
+                    if '501' in str(e):
+                        resp = self.list_objects(prefix=prefix)
+                        items = list(resp.iter_objects())
+                    else:
+                        raise
+            else:
+                resp = self.list_objects(prefix=prefix)
+                items = list(resp.iter_objects())
+            keys = [{'key': obj['key'], 'version_id': obj.get('version_id')} for obj in items]
+        else:
+            # Normalize input: strings -> dicts
+            if keys and isinstance(keys[0], str):
+                keys = [{'key': k} for k in keys]
+
+            # If purge, resolve version IDs for keys that don't have them
+            if purge:
+                resolved = []
+                for k in keys:
+                    key_name = k.get('key') or k.get('Key')
+                    version_id = k.get('version_id') or k.get('VersionId')
+                    if version_id:
+                        resolved.append(k)
+                    else:
+                        try:
+                            resp = self.list_object_versions(prefix=key_name)
+                            found = False
+                            for obj in resp.iter_objects():
+                                if obj['key'] == key_name:
+                                    resolved.append({'key': obj['key'], 'version_id': obj['version_id']})
+                                    found = True
+                            if not found:
+                                resolved.append(k)
+                        except urllib3.exceptions.HTTPError as e:
+                            if '501' in str(e):
+                                resp = self.list_objects(prefix=key_name)
+                                found = False
+                                for obj in resp.iter_objects():
+                                    if obj['key'] == key_name:
+                                        resolved.append({'key': obj['key']})
+                                        found = True
+                                if not found:
+                                    resolved.append(k)
+                            else:
+                                resolved.append(k)
+                        except Exception:
+                            resolved.append(k)
+                keys = resolved
+
         # S3 Delete Objects requires a specific XML payload
         # <Delete><Object><Key>...</Key><VersionId>...</VersionId></Object>...</Delete>
         url = urllib.parse.urljoin(self._endpoint_url, f"{self.bucket}")
@@ -367,7 +454,6 @@ class S3Session:
         for keys_chunk in utils.chunks(keys, 1000):
             # Build XML
             root = ET.Element('Delete', xmlns="http://s3.amazonaws.com/doc/2006-03-01/")
-            # Quiet mode? Original used Quiet=True
             quiet = ET.SubElement(root, 'Quiet')
             quiet.text = 'true'
 
@@ -380,23 +466,18 @@ class S3Session:
                 else:
                     raise ValueError('"key" must be passed in the list of dict.')
 
-                if 'version_id' in k:
+                if k.get('version_id'):
                     ET.SubElement(obj, 'VersionId').text = k['version_id']
-                elif 'VersionId' in k:
+                elif k.get('VersionId'):
                     ET.SubElement(obj, 'VersionId').text = k['VersionId']
 
             body = ET.tostring(root, encoding='utf-8')
 
-            # Subresource ?delete
             query_params = {'delete': ''}
-
-            # Content-MD5 is often required for DeleteObjects for integrity, but let's try without first or add if needed.
-            # SigV4 protects integrity too.
 
             md5 = base64.b64encode(hashlib.md5(body).digest()).decode('utf-8')
             headers = {'Content-MD5': md5, 'Content-Type': 'application/xml'}
 
-            # Delete objects response is small, preload it
             self.request('POST', url, headers=headers, fields=query_params, body=body, preload_content=True)
 
     def copy_object(
@@ -434,13 +515,13 @@ class S3Session:
         # Destination
         if dest_bucket is None:
             dest_bucket = self.bucket
-        url = urllib.parse.urljoin(self._endpoint_url, f"{dest_bucket}/{dest_key}")
+        url = self._object_url(dest_key, bucket=dest_bucket)
 
         # Source header: x-amz-copy-source: /bucket/key?versionId=...
         if source_bucket is None:
             source_bucket = self.bucket
 
-        copy_source = f"{source_bucket}/{source_key}"
+        copy_source = f"{source_bucket}/{urllib.parse.quote(source_key)}"
         if source_version_id:
             copy_source += f"?versionId={source_version_id}"
 
@@ -522,7 +603,7 @@ class S3Session:
         s3resp = response.S3Response(resp, False)
         return s3resp
 
-    def lock(self, key: str, lock_id: str = None):
+    def lock(self, key: str, lock_id: str = None, **lock_kwargs):
         """
         This class contains a locking mechanism by utilizing S3 objects. It has implementations for both shared and exclusive (the default) locks. It follows the same locking API as python thread locks (https://docs.python.org/3/library/threading.html#lock-objects), but with some extra methods for managing "deadlocks". The required S3 permissions are ListObjects, WriteObjects, and DeleteObjects.
 
@@ -534,6 +615,9 @@ class S3Session:
             The base object key that will be given a lock. The extension ".lock" plus a unique lock id will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten or deleted.
         lock_id: str or None
             Reuse an existing lock ID. Defaults to none which will create a new ID.
+        **lock_kwargs
+            Passed through to S3Lock - e.g. the hardening knobs ``settle_delay``
+            (default 1.0s) and ``visibility_timeout`` (default 30s).
 
         Returns
         -------
@@ -549,4 +633,5 @@ class S3Session:
             max_attempts=self._max_attempts,
             retry_mode=self._retry_mode,
             read_timeout=self._read_timeout,
+            **lock_kwargs,
         )

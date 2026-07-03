@@ -1,7 +1,7 @@
 # s3func
 
 <p align="center">
-    <em>Simple functions for working with S3 and B2</em>
+    <em>Simple functions for working with S3-compatible object storage</em>
 </p>
 
 [![build](https://github.com/mullenkamp/s3func/workflows/Build/badge.svg)](https://github.com/mullenkamp/s3func/actions)
@@ -10,13 +10,13 @@
 
 ---
 
-`s3func` is a lightweight Python library providing a simplified interface for interacting with S3-compatible object storage services and Backblaze B2. It removes the `boto3` dependency in favor of a fast, `urllib3`-based client with custom SigV4 signing.
+`s3func` is a lightweight Python library providing a simplified interface for interacting with S3-compatible object storage services (AWS S3, Backblaze B2, MEGA S4, and others). It removes the `boto3` dependency in favor of a fast, `urllib3`-based client with custom SigV4 signing.
 
 ## Key Features
 
 - **Zero Boto3 Dependency**: Minimal overhead and faster imports.
-- **S3 & B2 Support**: Unified interface for both AWS S3 (and compatible) and Backblaze B2 native API.
-- **Distributed Locking**: Robust shared and exclusive locking mechanism using object storage.
+- **Provider-Agnostic**: One `S3Session` for AWS S3 and any S3-compatible provider (Backblaze B2, MEGA S4, ...), with provider quirks handled portably (strict RFC3986 signing of paths and queries).
+- **Distributed Locking**: Verified shared/exclusive locking on plain object storage - no CAS required (see [docs/locking.md](docs/locking.md)).
 - **Streaming Support**: Efficiently stream large objects.
 - **Automatic Retries**: Built-in adaptive retry logic for transient network issues.
 
@@ -79,24 +79,6 @@ resp = session.head_object('data.csv')
 print(resp.metadata['processed']) # 'false'
 ```
 
-### Backblaze B2 Operations
-
-`s3func` uses the B2 native API for better performance and reliability on Backblaze.
-
-```python
-from s3func import B2Session
-
-# Initialize B2 session
-session = B2Session(
-    access_key_id='YOUR_APPLICATION_KEY_ID',
-    access_key='YOUR_APPLICATION_KEY',
-    bucket='my-b2-bucket'
-)
-
-# Put object
-session.put_object('data.json', b'{"status": "ok"}', content_type='application/json')
-```
-
 ### Distributed Locking
 
 `s3func` provides a powerful distributed lock that mimics Python's `threading.Lock` API.
@@ -120,17 +102,40 @@ if lock.acquire(blocking=True, timeout=10):
 ## Performance Tips
 
 - **Streaming**: Set `stream=True` in the session (default) or individual requests to handle large files without loading them entirely into memory.
-- **B2 Authorization Caching**: `s3func` automatically caches B2 authorization tokens globally for up to 1 hour, significantly reducing latency for concurrent operations.
 - **Adaptive Retries**: The library uses `urllib3` retry logic configured for high-concurrency environments to handle rate limiting and network blips automatically.
 
 ## How Distributed Locking Works
 
-The locking mechanism uses a "two-object sequential" protocol to ensure safety even in eventually consistent systems:
+Full walk-through with diagrams: [docs/locking.md](docs/locking.md).
 
-1.  **Acquisition**: A worker writes two small objects (`seq-0` and `seq-1`) to the storage provider.
-2.  **Verification**: It then lists all existing lock objects for that resource. 
-3.  **Conflict Resolution**: A worker "wins" the lock if its `seq-1` timestamp is the earliest among all candidates. If timestamps are identical, the lexicographical order of a unique `lock_id` acts as a tie-breaker. 
-4.  **Auto-Cleanup**: Uses `weakref.finalize` to ensure lock objects are deleted even if the process exits unexpectedly (best effort).
+The lock is a Lamport-bakery-style election over plain object storage (no
+compare-and-swap needed):
+
+1.  **Acquisition**: A worker writes two small ticket objects (`seq-0` and `seq-1`).
+2.  **Self-visibility gate (0.9.0)**: it polls the listing until its OWN ticket is
+    visible - a listing that cannot show your own writes cannot be trusted to show
+    competitors (raises after `visibility_timeout`, default 30s).
+3.  **Election**: it lists all tickets and yields to older ones (`seq-1` timestamp;
+    lexicographic `lock_id` breaks ties). Shared tickets yield only to older
+    exclusive tickets.
+4.  **Confirming re-list (0.9.0)**: winning requires a second clear listing taken
+    `settle_delay` (default 1.0s) later - a violation now needs two *independent*
+    stale listings.
+5.  **Own-ticket invariant (0.9.0)**: every decisive listing must still contain the
+    worker's own ticket; if another client deleted it (e.g. `break_other_locks`),
+    acquisition raises instead of "winning" without a ticket. Recovering a ticket
+    via `lock_id=` restores the ticket only - `acquire()` re-runs the election.
+6.  **Auto-Cleanup**: `weakref.finalize` deletes ticket objects even if the process
+    exits unexpectedly (best effort).
+
+**Guarantee and residual window**: on storage with strongly consistent listings the
+election is safe. On eventually-consistent listings the hardening reduces the
+failure mode to *two consecutive independently-stale listings* (measured on B2:
+80/80 listings were first-poll consistent - see `benchmarks/results_visibility_lag.md`).
+No provider we tested currently offers atomic conditional writes
+(`benchmarks/conditional_write_probe.py` is the qualification gate for adding a
+true CAS lock per provider; MEGA S4 accepts the headers but is not atomic under
+concurrency). Tune via `session.lock(key, settle_delay=..., visibility_timeout=...)`.
 
 ## Development
 
