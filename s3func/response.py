@@ -145,7 +145,25 @@ def iter_s3_list(session, url, method, headers, params):
                     ),
                     # 'owner': ... (Owner might be present)
                 }
-            # Iterate DeleteMarkers if needed? (Not in original boto3 wrapper explicitly but handled)
+            # Delete markers are yielded explicitly with a flag so consumers can
+            # (and must) distinguish them from live versions - the lock's
+            # listing filter skips them deliberately.
+            for marker in find_all(root, 'DeleteMarker'):
+                yield {
+                    'delete_marker': True,
+                    'content_md5': None,
+                    'content_length': 0,
+                    'key': find_text(marker, 'Key'),
+                    'version_id': find_text(marker, 'VersionId'),
+                    'is_latest': find_text(marker, 'IsLatest') == 'true',
+                    'upload_timestamp': (
+                        datetime.datetime.strptime(find_text(marker, 'LastModified'), '%Y-%m-%dT%H:%M:%S.%fZ').replace(
+                            tzinfo=datetime.timezone.utc
+                        )
+                        if find_text(marker, 'LastModified')
+                        else None
+                    ),
+                }
 
             is_truncated = find_text(root, 'IsTruncated') == 'true'
             if is_truncated:

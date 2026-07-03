@@ -6,6 +6,7 @@ Created on May 13 08:04:38 2024
 @author: mike
 """
 import io
+import warnings
 from typing import List, Union
 import urllib.parse
 import hashlib
@@ -170,7 +171,16 @@ class B2Session:
             An alternative download_url when downloading data. If None, the download_url will be retrieved from the initial b2 request. It should NOT include the file/ at the end of the url.
         stream : bool
             Should the connection stay open for streaming or should all the data/content be loaded during the initial request.
+
+        .. deprecated:: 0.9.0
+            The B2 native API offers no capability or performance advantage over
+            B2's S3-compatible endpoint. Use :class:`s3func.S3Session` instead.
         """
+        warnings.warn(
+            'B2Session (the B2 native API) is deprecated and will be removed in s3func 1.0 - '
+            'use S3Session with the B2 S3-compatible endpoint instead.',
+            DeprecationWarning, stacklevel=2,
+        )
         b2_session = http_url.session(max_connections, max_attempts, read_timeout)
 
         if isinstance(download_url, str):

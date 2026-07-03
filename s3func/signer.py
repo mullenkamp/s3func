@@ -24,9 +24,11 @@ class SigV4Auth:
         self.region = region
         self.service = service
 
-    def add_auth(self, request_method: str, url: str, headers: Dict[str, str], body: Union[bytes, str, None] = None):
+    def add_auth(self, request_method: str, url: str, headers: Dict[str, str], body: Union[bytes, str, None] = None,
+                 _now: Optional[datetime.datetime] = None):
         """
         Calculates the AWS Signature Version 4 and adds the Authorization header to the headers dict.
+        _now is a test seam for deterministic signatures; leave None in production.
         """
         # Parse URL
         parsed_url = urllib.parse.urlparse(url)
@@ -49,7 +51,7 @@ class SigV4Auth:
             canonical_query_string = '&'.join(canonical_query_parts)
 
         # Time
-        t = datetime.datetime.now(datetime.timezone.utc)
+        t = _now or datetime.datetime.now(datetime.timezone.utc)
         amz_date = t.strftime('%Y%m%dT%H%M%SZ')
         datestamp = t.strftime('%Y%m%d')
 

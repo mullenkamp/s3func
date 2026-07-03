@@ -262,3 +262,25 @@ def test_b2_head_object():
         for js in b2_session.list_object_versions().iter_objects():
             if js['key'] == obj_key:
                 b2_session.delete_object(js['key'], js['version_id'])
+
+
+def test_special_character_keys(s3_session):
+    """
+    Keys containing RFC3986-reserved characters must sign and round-trip
+    correctly (regression: an unencoded '!' in the canonical URI failed B2
+    signature validation with AccessDenied).
+    """
+    body = b'special-key-body'
+    run = uuid.uuid4().hex[:6]
+    for ch in ['!', '(', ')', "'", '*', ' ', '+', '&', '=', '$', '@', ',', ';']:
+        key = f'special-keys-{run}/pre{ch}post'
+        resp = s3_session.put_object(key, body)
+        assert resp.status == 200, (ch, resp.error)
+        got = s3_session.get_object(key)
+        got_data = got.data if got.data else got.stream.read()
+        assert got.status == 200 and got_data == body, (ch, got.error)
+        listed = [o['key'] for o in s3_session.list_objects(prefix=key).iter_objects()]
+        assert key in listed, ch
+        ## singular delete: MEGA S4's multi-object-delete POST hangs on keys
+        ## containing '$' (server-side quirk; documented in benchmarks results)
+        s3_session.delete_object(key)

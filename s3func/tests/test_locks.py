@@ -145,3 +145,23 @@ def test_B2Lock_concurrency():
         concurrent.futures.wait(futures)
 
     assert sum(results) == num_workers
+
+
+def test_s3_lock_shared(s3_session):
+    """Two shared holders coexist; an exclusive contender is blocked until both release."""
+    obj_key = uuid.uuid4().hex
+    r1 = s3_session.lock(obj_key)
+    r2 = s3_session.lock(obj_key)
+    w = s3_session.lock(obj_key)
+    try:
+        assert r1.acquire(exclusive=False) is True
+        assert r2.acquire(exclusive=False) is True
+        assert w.acquire(blocking=False) is False
+        r1.release()
+        r2.release()
+        assert w.acquire(timeout=60) is True
+    finally:
+        r1.release()
+        r2.release()
+        w.release()
+        assert w.locked() is False

@@ -36,7 +36,11 @@ markdown_extensions:
         custom_checkbox: true
     - pymdownx.inlinehilite
     - pymdownx.snippets
-    - pymdownx.superfences
+    - pymdownx.superfences:
+        custom_fences:
+            - name: mermaid
+              class: mermaid
+              format: !!python/name:pymdownx.superfences.fence_code_format
 
 plugins:
     - search
@@ -54,5 +58,6 @@ watch:
 
 nav:
     - About: index.md
+    - Distributed locking: locking.md
     - Reference:
         - s3func: reference/s3func.md

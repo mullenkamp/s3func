@@ -116,6 +116,16 @@ class S3Session:
         self._retry_mode = retry_mode
         self._read_timeout = read_timeout
 
+    def _object_url(self, key, bucket=None):
+        """
+        Build an object URL with the key percent-encoded exactly once. SigV4's
+        canonical URI is the encoded path, and servers canonicalize what they
+        receive - an unencoded special character (e.g. '!') on the wire makes
+        the two disagree and fails signature validation.
+        """
+        b = bucket or self.bucket
+        return urllib.parse.urljoin(self._endpoint_url, f"{b}/{urllib.parse.quote(key)}")
+
     def request(self, method, url, headers=None, fields=None, body=None, preload_content=None):
         """
         Wrapper to perform signed request via urllib3
@@ -129,7 +139,11 @@ class S3Session:
         # Sign request
         if fields:
             scheme, netloc, path, query, fragment = urllib.parse.urlsplit(url)
-            query_str = urllib.parse.urlencode(fields)
+            ## RFC3986 encoding (space -> %20, not '+'): the SigV4 canonical query
+            ## uses %20, and not every provider canonicalizes a wire '+' as a
+            ## space (MEGA S4 does not) - identical wire/canonical encoding is
+            ## the only portable choice.
+            query_str = urllib.parse.urlencode(fields, quote_via=urllib.parse.quote)
             if query:
                 query = f"{query}&{query_str}"
             else:
@@ -162,7 +176,7 @@ class S3Session:
         -------
         S3Response
         """
-        url = urllib.parse.urljoin(self._endpoint_url, f"{self.bucket}/{key}")
+        url = self._object_url(key)
 
         query_params, headers = utils.build_s3_params(
             self.bucket, key=key, version_id=version_id, range_start=range_start, range_end=range_end
@@ -190,7 +204,7 @@ class S3Session:
         -------
         S3Response
         """
-        url = urllib.parse.urljoin(self._endpoint_url, f"{self.bucket}/{key}")
+        url = self._object_url(key)
 
         query_params, headers = utils.build_s3_params(self.bucket, key=key, version_id=version_id)
 
@@ -241,7 +255,7 @@ class S3Session:
         if size > 2048:
             raise ValueError('metadata size is {size} bytes, but it must be under 2048 bytes.')
 
-        url = urllib.parse.urljoin(self._endpoint_url, f"{self.bucket}/{key}")
+        url = self._object_url(key)
 
         query_params, headers = utils.build_s3_params(
             self.bucket, key=key, metadata=metadata, content_type=content_type
@@ -341,7 +355,7 @@ class S3Session:
         -------
         S3Response
         """
-        url = urllib.parse.urljoin(self._endpoint_url, f"{self.bucket}/{key}")
+        url = self._object_url(key)
 
         query_params, headers = utils.build_s3_params(self.bucket, key=key, version_id=version_id)
 
@@ -501,13 +515,13 @@ class S3Session:
         # Destination
         if dest_bucket is None:
             dest_bucket = self.bucket
-        url = urllib.parse.urljoin(self._endpoint_url, f"{dest_bucket}/{dest_key}")
+        url = self._object_url(dest_key, bucket=dest_bucket)
 
         # Source header: x-amz-copy-source: /bucket/key?versionId=...
         if source_bucket is None:
             source_bucket = self.bucket
 
-        copy_source = f"{source_bucket}/{source_key}"
+        copy_source = f"{source_bucket}/{urllib.parse.quote(source_key)}"
         if source_version_id:
             copy_source += f"?versionId={source_version_id}"
 
@@ -589,7 +603,7 @@ class S3Session:
         s3resp = response.S3Response(resp, False)
         return s3resp
 
-    def lock(self, key: str, lock_id: str = None):
+    def lock(self, key: str, lock_id: str = None, **lock_kwargs):
         """
         This class contains a locking mechanism by utilizing S3 objects. It has implementations for both shared and exclusive (the default) locks. It follows the same locking API as python thread locks (https://docs.python.org/3/library/threading.html#lock-objects), but with some extra methods for managing "deadlocks". The required S3 permissions are ListObjects, WriteObjects, and DeleteObjects.
 
@@ -601,6 +615,9 @@ class S3Session:
             The base object key that will be given a lock. The extension ".lock" plus a unique lock id will be appended to the key, so the user is welcome to reference an existing object without worry that it will be overwritten or deleted.
         lock_id: str or None
             Reuse an existing lock ID. Defaults to none which will create a new ID.
+        **lock_kwargs
+            Passed through to S3Lock - e.g. the hardening knobs ``settle_delay``
+            (default 1.0s) and ``visibility_timeout`` (default 30s).
 
         Returns
         -------
@@ -616,4 +633,5 @@ class S3Session:
             max_attempts=self._max_attempts,
             retry_mode=self._retry_mode,
             read_timeout=self._read_timeout,
+            **lock_kwargs,
         )

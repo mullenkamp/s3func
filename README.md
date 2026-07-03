@@ -81,7 +81,10 @@ print(resp.metadata['processed']) # 'false'
 
 ### Backblaze B2 Operations
 
-`s3func` uses the B2 native API for better performance and reliability on Backblaze.
+> **Deprecated (0.9.0, removal in 1.0):** the B2 native API offers no capability or
+> performance advantage over B2's S3-compatible endpoint (measured: native version
+> listing is slower and no more consistent). Use `S3Session` with your B2
+> S3-compatible endpoint instead. `B2Session`/`B2Lock` now emit `DeprecationWarning`.
 
 ```python
 from s3func import B2Session
@@ -125,12 +128,34 @@ if lock.acquire(blocking=True, timeout=10):
 
 ## How Distributed Locking Works
 
-The locking mechanism uses a "two-object sequential" protocol to ensure safety even in eventually consistent systems:
+The lock is a Lamport-bakery-style election over plain object storage (no
+compare-and-swap needed):
 
-1.  **Acquisition**: A worker writes two small objects (`seq-0` and `seq-1`) to the storage provider.
-2.  **Verification**: It then lists all existing lock objects for that resource. 
-3.  **Conflict Resolution**: A worker "wins" the lock if its `seq-1` timestamp is the earliest among all candidates. If timestamps are identical, the lexicographical order of a unique `lock_id` acts as a tie-breaker. 
-4.  **Auto-Cleanup**: Uses `weakref.finalize` to ensure lock objects are deleted even if the process exits unexpectedly (best effort).
+1.  **Acquisition**: A worker writes two small ticket objects (`seq-0` and `seq-1`).
+2.  **Self-visibility gate (0.9.0)**: it polls the listing until its OWN ticket is
+    visible - a listing that cannot show your own writes cannot be trusted to show
+    competitors (raises after `visibility_timeout`, default 30s).
+3.  **Election**: it lists all tickets and yields to older ones (`seq-1` timestamp;
+    lexicographic `lock_id` breaks ties). Shared tickets yield only to older
+    exclusive tickets.
+4.  **Confirming re-list (0.9.0)**: winning requires a second clear listing taken
+    `settle_delay` (default 1.0s) later - a violation now needs two *independent*
+    stale listings.
+5.  **Own-ticket invariant (0.9.0)**: every decisive listing must still contain the
+    worker's own ticket; if another client deleted it (e.g. `break_other_locks`),
+    acquisition raises instead of "winning" without a ticket. Recovering a ticket
+    via `lock_id=` restores the ticket only - `acquire()` re-runs the election.
+6.  **Auto-Cleanup**: `weakref.finalize` deletes ticket objects even if the process
+    exits unexpectedly (best effort).
+
+**Guarantee and residual window**: on storage with strongly consistent listings the
+election is safe. On eventually-consistent listings the hardening reduces the
+failure mode to *two consecutive independently-stale listings* (measured on B2:
+80/80 listings were first-poll consistent - see `benchmarks/results_visibility_lag.md`).
+No provider we tested currently offers atomic conditional writes
+(`benchmarks/conditional_write_probe.py` is the qualification gate for adding a
+true CAS lock per provider; MEGA S4 accepts the headers but is not atomic under
+concurrency). Tune via `session.lock(key, settle_delay=..., visibility_timeout=...)`.
 
 ## Development
 
