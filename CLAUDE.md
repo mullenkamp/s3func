@@ -28,11 +28,20 @@ uv run pytest s3func/tests/                                                # FUL
   part of routine testing. Results recorded in `benchmarks/results_visibility_lag.md`.
 - After changing `locking.py` or `s3.py`/`signer.py`, run the ebooklet suite as
   a downstream regression: `cd ~/git/ebooklet && uv run --with ~/git/s3func pytest ebooklet/tests/`.
+  **CAUTION**: `uv run --with <local dir>` can serve a STALE cached build of the
+  directory (observed 2026-07-05: a cached booklet 0.12.0 masqueraded as the
+  working tree and produced phantom failures). Before trusting such a run,
+  verify inside the overlay (`uv run --with ~/git/s3func python -c "import s3func;
+  print(s3func.__version__)"`) or `uv cache clean s3func` first.
 
 ## Architecture
 
 - `s3.py` — `S3Session` (all providers). Object URLs MUST go through
-  `_object_url()` (percent-encodes keys once).
+  `_object_url()` (percent-encodes keys once). `delete_objects` raises
+  `HTTPError` listing the failed keys if ANY delete fails (all chunks are
+  attempted first) — the multi-delete response must never be ignored: Quiet
+  mode still returns per-key `<Error>` elements, and urllib3 does not raise
+  on HTTP status.
 - `signer.py` — SigV4. **Invariant: wire encoding == canonical encoding**,
   strict RFC3986 for both paths and query strings (some providers, e.g. MEGA,
   do not canonicalize a wire `+` as a space). `add_auth(_now=...)` is a test seam.

@@ -385,7 +385,14 @@ class S3Session:
 
         Returns
         -------
-        None
+        None on full success.
+
+        Raises
+        ------
+        urllib3.exceptions.HTTPError
+            If any object fails to delete (whole-batch HTTP failure or per-key
+            errors in the DeleteResult). All chunks are attempted before raising,
+            so everything deletable is deleted; the error lists the failed keys.
         """
         if keys is not None and prefix is not None:
             raise ValueError('keys and prefix are mutually exclusive.')
@@ -451,6 +458,7 @@ class S3Session:
         # <Delete><Object><Key>...</Key><VersionId>...</VersionId></Object>...</Delete>
         url = urllib.parse.urljoin(self._endpoint_url, f"{self.bucket}")
 
+        failures = []
         for keys_chunk in utils.chunks(keys, 1000):
             # Build XML
             root = ET.Element('Delete', xmlns="http://s3.amazonaws.com/doc/2006-03-01/")
@@ -478,7 +486,38 @@ class S3Session:
             md5 = base64.b64encode(hashlib.md5(body).digest()).decode('utf-8')
             headers = {'Content-MD5': md5, 'Content-Type': 'application/xml'}
 
-            self.request('POST', url, headers=headers, fields=query_params, body=body, preload_content=True)
+            ## The POST response must be checked: urllib3 does not raise on HTTP
+            ## status, and Quiet=true still returns per-key <Error> elements -
+            ## ignoring either silently no-ops the deletes. All chunks are still
+            ## attempted (best effort) before any raise.
+            resp = self.request('POST', url, headers=headers, fields=query_params, body=body, preload_content=True)
+            if (resp.status // 100) != 2:
+                reason = resp.data[:200] if resp.data else b''
+                for k in keys_chunk:
+                    failures.append({
+                        'key': k.get('key') or k.get('Key'),
+                        'code': str(resp.status),
+                        'message': reason.decode('utf-8', errors='replace'),
+                    })
+            else:
+                try:
+                    failures.extend(response.parse_delete_errors(resp.data))
+                except urllib3.exceptions.HTTPError:
+                    # Unparseable 200 body: the chunk's outcome is unknown - record
+                    # it as failed rather than aborting the remaining chunks.
+                    for k in keys_chunk:
+                        failures.append({
+                            'key': k.get('key') or k.get('Key'),
+                            'code': 'unparseable-response',
+                            'message': (resp.data[:200] if resp.data else b'').decode('utf-8', errors='replace'),
+                        })
+
+        if failures:
+            shown = ', '.join(f"{f['key']} ({f['code']}: {f['message']})" for f in failures[:5])
+            more = f' (+{len(failures) - 5} more)' if len(failures) > 5 else ''
+            raise urllib3.exceptions.HTTPError(
+                f'S3 multi-delete failed for {len(failures)} key(s): {shown}{more}'
+            )
 
     def copy_object(
         self,
