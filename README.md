@@ -18,7 +18,7 @@
 - **Provider-Agnostic**: One `S3Session` for AWS S3 and any S3-compatible provider (Backblaze B2, MEGA S4, ...), with provider quirks handled portably (strict RFC3986 signing of paths and queries).
 - **Distributed Locking**: Verified shared/exclusive locking on plain object storage - no CAS required (see [docs/locking.md](docs/locking.md)).
 - **Streaming Support**: Efficiently stream large objects.
-- **Automatic Retries**: Built-in adaptive retry logic for transient network issues.
+- **Automatic Retries**: urllib3 retries with exponential backoff for connection errors and transient HTTP statuses (429/5xx); `Retry-After` honored; non-idempotent POSTs are never status-retried.
 
 ## Installation
 
@@ -102,7 +102,9 @@ if lock.acquire(blocking=True, timeout=10):
 ## Performance Tips
 
 - **Streaming**: Set `stream=True` in the session (default) or individual requests to handle large files without loading them entirely into memory.
-- **Adaptive Retries**: The library uses `urllib3` retry logic configured for high-concurrency environments to handle rate limiting and network blips automatically.
+- **Retries**: All sessions share one `urllib3` Retry policy (`max_attempts` retries, exponential backoff): connection errors and transient statuses (429, 500, 502, 503, 504) are retried on idempotent methods; when retries exhaust, the final response is returned (never an exception) so callers can inspect `resp.status`/`resp.error`. POST requests (S3 multi-object-delete, B2-native uploads) are never status-retried.
+
+Changes between releases are tracked in [CHANGELOG.md](CHANGELOG.md).
 
 ## How Distributed Locking Works
 

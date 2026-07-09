@@ -227,6 +227,46 @@ class S3ListResponse:
         return f'status: {self.status}'
 
 
+def parse_delete_errors(data):
+    """
+    Parse a multi-object-delete DeleteResult body and return the per-key failures
+    as a list of {'key', 'code', 'message'} dicts (empty list = full success).
+    Quiet mode suppresses only <Deleted> entries - <Error> elements still arrive
+    in a 200 response, so a caller that skips this parse mistakes partial failure
+    for success. An empty body is full success (some providers send none when all
+    deletes succeed in quiet mode); an unparseable non-empty body raises.
+    """
+    if not data or not data.strip():
+        return []
+
+    try:
+        root = ET.fromstring(data)
+    except ET.ParseError:
+        raise urllib3.exceptions.HTTPError('Failed to parse S3 multi-delete XML response')
+
+    # Determine namespace from root tag
+    if '}' in root.tag:
+        ns_url = root.tag.split('}')[0][1:]
+        ns = {'s3': ns_url}
+        error_path, key_path, code_path, msg_path = 's3:Error', 's3:Key', 's3:Code', 's3:Message'
+    else:
+        ns = {}
+        error_path, key_path, code_path, msg_path = 'Error', 'Key', 'Code', 'Message'
+
+    errors = []
+    for err in root.findall(error_path, ns):
+        key_el = err.find(key_path, ns)
+        code_el = err.find(code_path, ns)
+        msg_el = err.find(msg_path, ns)
+        errors.append({
+            'key': key_el.text if key_el is not None else None,
+            'code': code_el.text if code_el is not None else None,
+            'message': msg_el.text if msg_el is not None else None,
+        })
+
+    return errors
+
+
 def iter_b2_list(session, url, headers, params):
     """ """
     while True:

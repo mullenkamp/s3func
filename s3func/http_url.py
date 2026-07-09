@@ -33,7 +33,8 @@ def session(max_connections: int = 10, max_attempts: int = 3, timeout: int = 120
     max_connections : int
         The number of simultaneous connections for the S3 connection.
     max_attempts: int
-        The number of retries if the connection fails.
+        The number of retries for connection errors and transient HTTP
+        statuses (429, 500, 502, 503, 504). N retries = N+1 attempts.
     timeout: int
         The timeout in seconds.
 
@@ -45,6 +46,21 @@ def session(max_connections: int = 10, max_attempts: int = 3, timeout: int = 120
     retries = Retry(
         total=max_attempts,
         backoff_factor=1,
+        # Transient statuses are retried with exponential backoff (Retry-After
+        # honored when present - note urllib3 obeys it uncapped, so a
+        # misconfigured endpoint sending a huge Retry-After can block up to
+        # max_attempts * that value). POST is deliberately NOT in the retried
+        # methods (urllib3 default): the S3 multi-object-delete and the
+        # B2-native upload paths are POSTs, and b2.put_object has its own
+        # manual retry loop that must not compound with this one.
+        status_forcelist=(429, 500, 502, 503, 504),
+        # Callers dispatch on resp.status (locking lock-PUT check, delete_objects
+        # per-chunk failure handling, list iterators) and never expect a raise:
+        # when retries exhaust, the LAST response must be returned, not
+        # MaxRetryError. A status-retried PUT body is fine here because all
+        # internal PUT bodies are bytes (non-seekable file bodies would not be
+        # rewound - pre-existing hazard shared with connection-error retries).
+        raise_on_status=False,
     )
     http = urllib3.PoolManager(maxsize=max_connections, timeout=timeout, retries=retries, block=True)
 
@@ -76,7 +92,8 @@ class HttpSession:
         max_connections : int
             The number of simultaneous connections for the S3 connection.
         max_attempts: int
-            The number of retries if the connection fails.
+            The number of retries for connection errors and transient HTTP
+            statuses (429, 500, 502, 503, 504). N retries = N+1 attempts.
         read_timeout: int
             The read timeout in seconds.
         stream : bool
