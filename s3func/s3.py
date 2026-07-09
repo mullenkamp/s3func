@@ -87,11 +87,16 @@ class S3Session:
         max_pool_connections : int
             The number of simultaneous connections for the S3 connection.
         max_attempts: int
-            The number of max attempts passed to the "retries" option in the S3 config.
+            The number of retries for connection errors and transient HTTP
+            statuses (429, 500, 502, 503, 504). N retries = N+1 attempts.
         retry_mode: str
-            The retry mode passed to the "retries" option in the S3 config.
+            .. deprecated:: 0.9.2
+                Unused. Retry behavior is the fixed urllib3 Retry policy
+                configured via max_attempts. Kept for signature compatibility
+                (it is forwarded through the lock machinery); will be removed
+                at 1.0.
         read_timeout: int
-            The read timeout in seconds passed to the "retries" option in the S3 config.
+            The read timeout in seconds.
         stream : bool
             Should the connection stay open for streaming or should all the data/content be loaded during the initial request.
         """

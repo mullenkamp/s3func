@@ -164,7 +164,11 @@ class B2Session:
         max_connections : int
             The number of simultaneous connections for the B2 connection.
         max_attempts: int
-            The number of retries if the connection fails.
+            The number of retries for connection errors and transient HTTP
+            statuses (429, 500, 502, 503, 504) on non-POST requests.
+            N retries = N+1 attempts. (The B2-native upload/copy/delete calls
+            are POSTs and are never status-retried; put_object keeps its own
+            manual retry loop.)
         read_timeout: int
             The read timeout in seconds.
         download_url : str or None
