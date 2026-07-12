@@ -108,10 +108,20 @@ sequenceDiagram
   were consistent on the first poll (see `benchmarks/results_visibility_lag.md`),
   so the residual window is the tail of a distribution we could not observe.
 - `break_other_locks()` deliberately deletes other contenders' tickets (for
-  dead-lock recovery). The own-ticket invariant means a victim *raises* rather
-  than silently "winning" without a ticket — but breaking a live process's
-  lock still violates mutual exclusion by design. Use it only on locks you
-  know are dead.
+  dead-lock recovery). Since 0.9.3 it is **age-gated by default**: a
+  default-argument call deletes only tickets older than
+  `locking.default_break_age` (2 hours) — younger tickets are presumed to
+  belong to a live writer (ticket timestamps reflect session start, not
+  activity). Pass an explicit `timestamp` to break everything regardless of
+  age. The caller's own tickets are never deleted. A broken victim
+  mid-election *raises* (the own-ticket invariant); an established holder
+  discovers the break at its next `verify()`.
+- `verify()` (0.9.3) lets a **holder** cheaply re-check that it still holds
+  the lock: True only if the election was won and a fresh listing still shows
+  both of its ticket objects. Callers should verify at critical boundaries
+  (ebooklet does so at push start and immediately before its commit PUT) so a
+  broken holder aborts safely instead of writing without mutual exclusion.
+  Under listing staleness the failure direction is a spurious abort.
 
 ## Why each safeguard exists (verified 2026-07-03)
 
