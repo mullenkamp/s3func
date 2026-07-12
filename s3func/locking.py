@@ -41,6 +41,12 @@ ACQUIRED = 'acquired'
 WAIT = 'wait'
 TICKET_LOST = 'ticket_lost'
 
+## Default age gate for break_other_locks: tickets younger than this are
+## presumed to belong to a LIVE writer (ticket timestamps reflect session
+## START, not activity - long bulk sessions are normal) and are not broken
+## by a default-argument call. Override with an explicit timestamp.
+default_break_age = 7200  # seconds (2 hours)
+
 ## Session registry: maps a service name to a session class. A callable may also
 ## be passed directly as the service (e.g. a fake session factory in tests, or a
 ## future CAS-capable provider session - see benchmarks/conditional_write_probe.py
@@ -389,15 +395,36 @@ class DistributedLock:
         return other_locks
 
     def break_other_locks(self, timestamp: str | datetime.datetime = None):
+        """
+        Delete OTHER contenders' lock tickets uploaded at or before a cutoff.
+
+        By default the cutoff is ``default_break_age`` seconds (2 hours) ago:
+        younger tickets are presumed to belong to a LIVE writer - ticket
+        timestamps reflect session start, not activity, and long-running
+        write sessions are normal. Breaking a live holder's ticket does not
+        corrupt anything by itself, but the holder's next ``verify()`` will
+        return False and it must abort its protected operation (losing that
+        work). Pass an explicit ``timestamp`` to override the gate (e.g. now,
+        to break everything regardless of age).
+
+        The caller's OWN tickets are never deleted (before 0.9.3 the default
+        cutoff was "now" and included them, killing the caller's own
+        in-flight election).
+
+        Returns the list of deleted ticket objects.
+        """
         if timestamp is None:
-            timestamp = datetime.datetime.now(datetime.timezone.utc)
+            timestamp = datetime.datetime.now(datetime.timezone.utc) - datetime.timedelta(seconds=default_break_age)
         elif isinstance(timestamp, str):
             timestamp = datetime.datetime.fromisoformat(timestamp).astimezone(datetime.timezone.utc)
 
         session = init_session(self._service, self._session_kwargs)
         objs = self._list_objects(session, self._obj_lock_key)
         keys = []
+        own_prefix = self._obj_lock_key + self.lock_id + '-'
         for l in objs:
+            if l['key'].startswith(own_prefix):
+                continue
             if l['upload_timestamp'] <= timestamp:
                 d = {'key': l['key']}
                 if l.get('version_id'):
@@ -407,6 +434,34 @@ class DistributedLock:
             session.delete_objects(keys)
 
         return keys
+
+    def verify(self):
+        """
+        Re-verify that THIS instance still holds the lock.
+
+        Returns True only if the election was won (``acquire()`` returned True
+        and ``release()`` has not been called) AND a fresh listing still shows
+        both of this instance's ticket objects. A False from a previous holder
+        means the ticket was broken (another client's ``break_other_locks``) -
+        mutual exclusion is gone and the protected operation must not proceed.
+
+        Under listing staleness the failure direction is a spurious False
+        (safe abort): the self-visibility gate already established that the
+        listing showed this ticket once, so a listing that stops showing a
+        long-since-written object is treated as a deletion signal.
+        """
+        if not self._acquired:
+            return False
+
+        session = init_session(self._service, self._session_kwargs)
+        objs = self._list_objects(session, self._obj_lock_key, lock_id=self.lock_id)
+        seqs = set()
+        for l in objs:
+            parts = l['key'][self._obj_lock_key_len:].split('-')
+            if len(parts) == 2 and parts[0] == self.lock_id:
+                seqs.add(parts[1])
+
+        return '0' in seqs and '1' in seqs
 
     def locked(self):
         session = init_session(self._service, self._session_kwargs)
