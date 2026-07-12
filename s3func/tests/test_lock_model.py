@@ -425,3 +425,105 @@ def test_election_all_tied_single_winner():
     results = [evaluate_election(i, True, tickets) for i in ids]
     assert results.count(ACQUIRED) == 1 and results.count(WAIT) == 3
     assert results[0] == ACQUIRED  # lexicographically smallest id wins
+
+#################################################
+### 0.9.3: age-gated break_other_locks + holder verify()
+
+
+def _age_tickets(store, lock_id, when):
+    """Stamp both ticket objects of lock_id with an absolute upload time."""
+    for k, e in store.objects.items():
+        if lock_id in k:
+            e['upload_timestamp'] = when
+
+
+def test_break_other_locks_age_gate_default():
+    ## Default call must break only tickets older than default_break_age;
+    ## a fresh (live-writer) ticket survives.
+    store = FakeStore()
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    old = FakeLock(store, 'k')
+    old._put_lock_objects(True)
+    _age_tickets(store, old.lock_id, now - datetime.timedelta(hours=3))
+
+    live = FakeLock(store, 'k')
+    assert live.acquire() is True
+    _age_tickets(store, live.lock_id, now)
+
+    breaker = FakeLock(store, 'k')
+    deleted = breaker.break_other_locks()
+
+    deleted_keys = {d['key'] for d in deleted}
+    assert any(old.lock_id in k for k in deleted_keys), 'aged-out ticket not broken'
+    assert not any(live.lock_id in k for k in deleted_keys), 'default break killed a live ticket'
+    assert any(live.lock_id in k for k in store.objects), 'live ticket removed from the store'
+    live.release()
+    old._finalizer.detach()
+
+
+def test_break_other_locks_explicit_now_breaks_all_others():
+    store = FakeStore()
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    live = FakeLock(store, 'k')
+    assert live.acquire() is True
+    _age_tickets(store, live.lock_id, now)
+
+    breaker = FakeLock(store, 'k')
+    deleted = breaker.break_other_locks(timestamp=now + datetime.timedelta(seconds=1))
+    assert any(live.lock_id in k for d in deleted for k in [d['key']])
+    assert not any(live.lock_id in k for k in store.objects)
+
+
+def test_break_other_locks_never_breaks_own():
+    ## Even with an explicit force-everything timestamp, the caller's own
+    ## tickets must survive (pre-0.9.3 the default deleted them too).
+    store = FakeStore()
+    now = datetime.datetime.now(datetime.timezone.utc)
+
+    breaker = FakeLock(store, 'k')
+    breaker._put_lock_objects(True)
+    _age_tickets(store, breaker.lock_id, now - datetime.timedelta(days=1))
+
+    deleted = breaker.break_other_locks(timestamp=now)
+    assert deleted == []
+    own = [k for k in store.objects if breaker.lock_id in k]
+    assert len(own) == 2, 'break_other_locks deleted the caller\'s own tickets'
+    breaker._finalizer.detach()
+
+
+def test_verify_holder_and_broken_ticket():
+    store = FakeStore()
+    a = FakeLock(store, 'k')
+
+    ## Not acquired -> False, even before any tickets exist.
+    assert a.verify() is False
+
+    assert a.acquire() is True
+    assert a.verify() is True
+
+    ## A ticket-holding NON-winner must verify False (ticket != lock).
+    b = FakeLock(store, 'k')
+    b._put_lock_objects(True)
+    assert b.verify() is False
+    b.release()
+
+    ## Break the holder's ticket behind its back -> verify() goes False.
+    for k in [k for k in store.objects if a.lock_id in k]:
+        del store.objects[k]
+    assert a.verify() is False
+
+    a.release()
+    assert a.verify() is False
+
+
+def test_verify_partial_ticket_is_false():
+    ## Only one of the two seq objects left -> not held.
+    store = FakeStore()
+    a = FakeLock(store, 'k')
+    assert a.acquire() is True
+    seq0 = [k for k in store.objects if a.lock_id in k and k.endswith('-0')]
+    del store.objects[seq0[0]]
+    assert a.verify() is False
+    a.release()

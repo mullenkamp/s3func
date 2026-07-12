@@ -4,6 +4,27 @@ Notable changes to s3func. The format loosely follows [Keep a Changelog](https:/
 s3func does not promise SemVer — minor versions may change behavior.
 Entries for 0.8.5 and earlier were reconstructed from commit history after the fact.
 
+## 0.9.3 (2026-07-12)
+
+### Changed
+- **`break_other_locks()` is age-gated by default**: a default-argument call now
+  deletes only tickets uploaded more than `locking.default_break_age` seconds
+  (2 hours) ago. Previously the default cutoff was "now" — it deleted EVERY
+  ticket under the lock prefix, including a live writer's (silently ending its
+  mutual exclusion mid-session) and the caller's own. Pass an explicit
+  `timestamp` to override the gate (e.g. now, to break everything).
+- **`break_other_locks()` never deletes the caller's own tickets** (the name now
+  tells the truth). A crashed-and-reopened process gets a fresh `lock_id`, so
+  its stale previous ticket remains breakable as "other".
+
+### Added
+- **`DistributedLock.verify()`**: re-verify that THIS instance still holds the
+  lock — True only if the election was won and a fresh listing still shows both
+  of the instance's ticket objects. Lets a holder cheaply re-check mutual
+  exclusion at critical boundaries (ebooklet calls it at push start and before
+  the commit PUT); a broken holder aborts safely instead of writing without the
+  lock. Under listing staleness the failure direction is a spurious abort.
+
 ## 0.9.2 (2026-07-09)
 
 ### Fixed

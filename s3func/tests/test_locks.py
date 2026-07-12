@@ -1,6 +1,7 @@
 import pytest
 import os, pathlib
 import uuid
+import datetime
 from time import sleep
 import concurrent.futures
 
@@ -165,3 +166,30 @@ def test_s3_lock_shared(s3_session):
         r2.release()
         w.release()
         assert w.locked() is False
+
+def test_s3_lock_age_gate_and_verify(s3_session):
+    """0.9.3 live: a default break_other_locks spares a fresh (live) holder's
+    tickets; an explicit now-cutoff breaks them; the holder's verify() tracks
+    it (True while held, False after the break)."""
+    obj_key = uuid.uuid4().hex
+
+    holder = s3_session.lock(obj_key)
+    assert holder.acquire() is True
+    try:
+        assert holder.verify() is True
+
+        breaker = s3_session.lock(obj_key)
+
+        ## Age-gated default: the holder's minutes-old ticket must survive.
+        deleted = breaker.break_other_locks()
+        assert deleted == [], 'default break_other_locks deleted a fresh ticket'
+        assert holder.verify() is True
+
+        ## Explicit now-cutoff: the holder's ticket goes; its verify() fails safe.
+        deleted = breaker.break_other_locks(datetime.datetime.now(datetime.timezone.utc))
+        assert len(deleted) == 2
+        assert holder.verify() is False
+    finally:
+        holder.release()
+        ## Sweep any leftovers so the bucket stays clean.
+        s3_session.lock(obj_key).break_other_locks(datetime.datetime.now(datetime.timezone.utc))
