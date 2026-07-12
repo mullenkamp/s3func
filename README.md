@@ -127,7 +127,12 @@ compare-and-swap needed):
     worker's own ticket; if another client deleted it (e.g. `break_other_locks`),
     acquisition raises instead of "winning" without a ticket. Recovering a ticket
     via `lock_id=` restores the ticket only - `acquire()` re-runs the election.
-6.  **Auto-Cleanup**: `weakref.finalize` deletes ticket objects even if the process
+6.  **Holder re-verification (0.9.3)**: `lock.verify()` re-checks that a holder
+    still holds the lock (a fresh listing must show both of its ticket objects) -
+    call it at critical boundaries so a broken holder aborts instead of writing
+    without mutual exclusion. `break_other_locks()` is age-gated by default
+    (only tickets older than 2 hours are broken; the caller's own never are).
+7.  **Auto-Cleanup**: `weakref.finalize` deletes ticket objects even if the process
     exits unexpectedly (best effort).
 
 **Guarantee and residual window**: on storage with strongly consistent listings the
