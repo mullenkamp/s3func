@@ -16,10 +16,6 @@ jobs:
     strategy:
       # prevent cancelling other jobs if one version fails
       fail-fast: false
-      # The suite talks to REAL S3 providers with shared credentials: matrix
-      # jobs running concurrently race each other (lock elections, native-B2
-      # auth/rate limits) and fail spuriously - run one version at a time.
-      max-parallel: 1
       matrix:
         # Define the versions you want to test here
         python-version: ["3.10", "3.11", "3.12"]

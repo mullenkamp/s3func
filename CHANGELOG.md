@@ -4,13 +4,25 @@ Notable changes to s3func. The format loosely follows [Keep a Changelog](https:/
 s3func does not promise SemVer — minor versions may change behavior.
 Entries for 0.8.5 and earlier were reconstructed from commit history after the fact.
 
-## 0.9.5 (unreleased)
+## 0.9.5 (2026-07-16)
 
 ### Fixed
 - **Cloudflare-style edge errors (520-524) are now retried** on idempotent
   methods, alongside the existing 429/5xx set. B2's fronting infrastructure
   emits them transiently; a bare 522 ('The response produced nonsense
   content') failed an ebooklet CI run un-retried on 2026-07-15.
+
+### Changed
+- **CI matrix restored to parallel** (reverting 0.9.4's `max-parallel: 1`,
+  also reverted in ebooklet). The serialization was misdiagnosis: with the
+  failure logs finally in hand, none of the matrix failures were cross-job
+  races (all remote keys are per-run uuids) — they were an un-retried 522
+  (fixed above), a PyPI-propagation race during a release, and an intra-test
+  timing flake in the DEPRECATED B2-native lock's own 4-worker contention
+  test (1 of 4 workers exceeded its 120s acquire timeout; that test leaves
+  with the module's planned removal). Parallel matrix jobs also mirror
+  production reality: many concurrent ingestion processes against one
+  account is the normal envlib workload.
 
 ## 0.9.4 (2026-07-15)
 
