@@ -115,11 +115,23 @@ def test_retry_config():
     http = http_url.session(max_attempts=3)
     retries = http.connection_pool_kw['retries']
     assert retries.total == 3
-    assert set(retries.status_forcelist) == {429, 500, 502, 503, 504}
+    assert set(retries.status_forcelist) == {429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
     assert retries.raise_on_status is False
     assert retries.allowed_methods == Retry.DEFAULT_ALLOWED_METHODS
     assert 'POST' not in retries.allowed_methods
     assert retries.respect_retry_after_header is True
+
+
+def test_get_cloudflare_52x_retried_until_success(flaky_server, zero_backoff):
+    """The Cloudflare-style edge errors B2's fronting infrastructure emits
+    (a bare 522 failed an ebooklet CI run un-retried, 2026-07-15)."""
+    flaky_server.set_script([(522, {}), (520, {}), (200, {})])
+    session = _make_session(flaky_server.url)
+
+    resp = session.get_object('some_key')
+
+    assert resp.status == 200
+    assert len(flaky_server.requests) == 3
 
 
 def test_get_5xx_retried_until_success(flaky_server, zero_backoff):

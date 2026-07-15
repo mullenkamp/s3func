@@ -71,7 +71,12 @@ def session(max_connections: int = 10, max_attempts: int = 3, timeout: int = 120
         # methods (urllib3 default): the S3 multi-object-delete and the
         # B2-native upload paths are POSTs, and b2.put_object has its own
         # manual retry loop that must not compound with this one.
-        status_forcelist=(429, 500, 502, 503, 504),
+        # 520-524 are the Cloudflare-style edge errors ("web server returned
+        # an unknown error"/timeouts) that B2's fronting infrastructure emits
+        # transiently - a bare 522 failed an ebooklet CI run un-retried
+        # (2026-07-15); all are server-side transient conditions, safe to
+        # retry on idempotent methods.
+        status_forcelist=(429, 500, 502, 503, 504, 520, 521, 522, 523, 524),
         # Callers dispatch on resp.status (locking lock-PUT check, delete_objects
         # per-chunk failure handling, list iterators) and never expect a raise:
         # when retries exhaust, the LAST response must be returned, not

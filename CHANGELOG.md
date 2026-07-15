@@ -4,6 +4,14 @@ Notable changes to s3func. The format loosely follows [Keep a Changelog](https:/
 s3func does not promise SemVer — minor versions may change behavior.
 Entries for 0.8.5 and earlier were reconstructed from commit history after the fact.
 
+## 0.9.5 (unreleased)
+
+### Fixed
+- **Cloudflare-style edge errors (520-524) are now retried** on idempotent
+  methods, alongside the existing 429/5xx set. B2's fronting infrastructure
+  emits them transiently; a bare 522 ('The response produced nonsense
+  content') failed an ebooklet CI run un-retried on 2026-07-15.
+
 ## 0.9.4 (2026-07-15)
 
 The no-spurious-timeout release: two fixes that together make slow-but-
