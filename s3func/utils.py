@@ -23,6 +23,13 @@ from urllib.parse import urlparse
 #######################################################
 ### Parameters
 
+## Bytes bodies larger than this are wrapped in io.BytesIO before upload so
+## urllib3 streams them in 16KiB chunks. A monolithic bytes body is sent as
+## ONE socket sendall() whose deadline covers the WHOLE body (progress does
+## not extend it) - any upload slower than body/timeout dies spuriously
+## mid-transfer. Streaming makes the timeout per-chunk: a true idle timeout.
+stream_body_threshold = 2**20
+
 # key_patterns = {
 #     'b2': '{base_url}/{bucket}/{obj_key}',
 #     'contabo': '{base_url}:{bucket}/{obj_key}',

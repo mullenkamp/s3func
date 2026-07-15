@@ -424,9 +424,14 @@ class B2Session:
 
         headers = {'Authorization': upload_url_data['auth_token'], 'X-Bz-File-Name': key}
 
-        if isinstance(obj, bytes):
+        if isinstance(obj, (bytes, bytearray)):
             headers['Content-Length'] = len(obj)
             headers['X-Bz-Content-Sha1'] = hashlib.sha1(obj).hexdigest()
+            ## Stream large bodies (see s3.py put_object): a monolithic bytes
+            ## body is one sendall() with a whole-body deadline. The sha1 above
+            ## is computed from the bytes, so integrity verification is kept.
+            if len(obj) > utils.stream_body_threshold:
+                obj = io.BytesIO(obj)
         else:
             if obj.seekable():
                 obj.seek(0, 2)
@@ -471,6 +476,12 @@ class B2Session:
 
         counter = 0
         while True:
+            ## Each attempt re-POSTs the body: a file-like obj consumed by the
+            ## previous attempt MUST be rewound or the retry sends an empty
+            ## stream against a non-zero Content-Length (reachable since the
+            ## large-bytes BytesIO wrap above; harmless on the first attempt).
+            if hasattr(obj, 'seek'):
+                obj.seek(0)
             resp = self._session.request('post', upload_url, body=obj, headers=headers)
             if resp.status == 200:
                 break
