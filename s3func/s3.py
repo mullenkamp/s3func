@@ -68,6 +68,7 @@ class S3Session:
         retry_mode: str = 'adaptive',
         read_timeout: int = 120,
         stream=True,
+        connect_timeout: int = 30,
     ):
         """
         Establishes an S3 client connection with an S3 account.
@@ -96,11 +97,15 @@ class S3Session:
                 (it is forwarded through the lock machinery); will be removed
                 at 1.0.
         read_timeout: int
-            The read timeout in seconds.
+            The read timeout in seconds (per response read - an idle timeout,
+            not a total-request cap).
         stream : bool
             Should the connection stay open for streaming or should all the data/content be loaded during the initial request.
+        connect_timeout : int
+            Seconds allowed for connection establishment (also bounds each
+            body-send chunk during uploads - see http_url.session).
         """
-        self._session = http_url.session(max_pool_connections, max_attempts, read_timeout)
+        self._session = http_url.session(max_pool_connections, max_attempts, read_timeout, connect_timeout)
 
         from .signer import SigV4Auth
 
@@ -274,6 +279,19 @@ class S3Session:
             obj.seek(0, io.SEEK_END)
             headers['Content-Length'] = str(obj.tell() - curr)
             obj.seek(curr)
+
+        # Large bytes bodies MUST be streamed, never sent monolithically:
+        # urllib3 transmits a bytes body as ONE sendall() whose socket
+        # deadline (the CONNECT timeout during the send phase) covers the
+        # WHOLE body and is never extended by progress - any upload slower
+        # than len(obj)/connect_timeout dies spuriously mid-transfer and is
+        # retried from byte 0. A BytesIO body streams in 16KiB chunks (the
+        # timeout becomes per-chunk idle) and stays seekable, so connection-
+        # error retries rewind it. Hash while it's still bytes (one C-speed
+        # pass) so the signer doesn't re-read the stream to hash it.
+        if isinstance(obj, (bytes, bytearray)) and len(obj) > utils.stream_body_threshold:
+            headers['x-amz-content-sha256'] = hashlib.sha256(obj).hexdigest()
+            obj = io.BytesIO(obj)
 
         # PutObject response is always small, safe to preload
         resp = self.request('PUT', url, headers=headers, fields=query_params, body=obj, preload_content=True)

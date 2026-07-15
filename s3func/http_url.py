@@ -24,7 +24,7 @@ from . import utils, response
 ### Functions
 
 
-def session(max_connections: int = 10, max_attempts: int = 3, timeout: int = 120):
+def session(max_connections: int = 10, max_attempts: int = 3, timeout: int = 120, connect_timeout: int = 30):
     """
     Function to setup a urllib3 pool manager for url downloads.
 
@@ -36,13 +36,31 @@ def session(max_connections: int = 10, max_attempts: int = 3, timeout: int = 120
         The number of retries for connection errors and transient HTTP
         statuses (429, 500, 502, 503, 504). N retries = N+1 attempts.
     timeout: int
-        The timeout in seconds.
+        The READ timeout in seconds: the maximum time a single read of the
+        response may sit without data (an idle timeout), NOT a cap on total
+        request duration.
+    connect_timeout: int
+        Seconds allowed for connection establishment. NOTE: urllib3 leaves
+        the socket on this timeout during the request-SEND phase, so it also
+        caps each body-send operation - which is why large bytes bodies are
+        streamed (see utils.stream_body_threshold): streamed bodies send in
+        16KiB chunks, making this a per-chunk idle bound during upload.
 
     Returns
     -------
     Pool Manager object
     """
-    timeout = urllib3.util.Timeout(timeout)
+    ## Timeout semantics, hard-won (2026-07-15 transport review):
+    ## - A bare Timeout(x) sets total=x - a hard wall on WHOLE requests.
+    ##   Never do that: multi-minute uploads/downloads are legitimate.
+    ## - read= applies per response-read: slow-but-progressing GETs never
+    ##   spuriously die; a stalled socket dies within `timeout`.
+    ## - connect= ALSO governs each socket send op during the request body
+    ##   phase. A monolithic bytes body = ONE send op spanning the whole
+    ##   body, so it must be streamed (put_object wraps large bytes in
+    ##   BytesIO); then a progressing upload never times out and a genuinely
+    ##   stalled one dies within `connect_timeout`.
+    timeout = urllib3.util.Timeout(connect=connect_timeout, read=timeout)
     retries = Retry(
         total=max_attempts,
         backoff_factor=1,

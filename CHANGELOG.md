@@ -4,6 +4,49 @@ Notable changes to s3func. The format loosely follows [Keep a Changelog](https:/
 s3func does not promise SemVer — minor versions may change behavior.
 Entries for 0.8.5 and earlier were reconstructed from commit history after the fact.
 
+## 0.9.4 (2026-07-15)
+
+The no-spurious-timeout release: two fixes that together make slow-but-
+progressing transfers (in either direction) immune to timeouts while genuinely
+stalled sockets still die promptly. Found by the ebooklet 0.10.1 pre-release
+end-to-end push test; mechanism established by a dual-blind transport review
+(both reviewers converged on the same diagnosis and the same fix by
+independent live experiments — reports in the ebooklet repo's `planning/`).
+Neither fix is sufficient alone: the timeout split without body streaming
+made concurrent uploads strictly WORSE (it tightened the effective send wall
+from 60s to 30s).
+
+### Fixed
+- **Large uploads no longer race a hidden whole-body deadline.** `put_object`
+  (S3 and B2-native) passed `bytes` bodies straight to urllib3, which
+  transmits a bytes body as ONE socket `sendall()` — and CPython fixes that
+  call's deadline at entry from the socket timeout, never extending it on
+  progress. Any PUT whose transmission time exceeded the socket timeout died
+  with `TimeoutError('The write operation timed out')` on a perfectly healthy
+  connection, then retried from byte 0 (concurrency only divides per-stream
+  throughput, so ebooklet's newly-concurrent pushes hit this wall
+  constantly — e.g. 10 streams on a ~10MB/s uplink fail every group over
+  ~30MB, deterministically). Bytes bodies over 1MiB (`utils.stream_body_threshold`)
+  are now wrapped in `io.BytesIO`: urllib3 streams them in 16KiB chunks, the
+  timeout becomes per-chunk (a true idle bound), retries still rewind via
+  `seek(0)`, and the payload hash (SigV4 SHA-256 / B2 SHA-1) is still computed
+  from the original bytes in one pass. Verified live A/B: 10×78MB raw-bytes
+  PUTs = 0/10; identical bodies via BytesIO = 10/10 with zero retries, even
+  on streams that legitimately took 275s. Known cost: `BytesIO(obj)` copies,
+  so each in-flight large upload transiently holds ~2× its payload in RAM.
+- **The session timeout is now a true READ (idle) timeout, not a total-request
+  deadline.** `session()` built `urllib3.util.Timeout(timeout)`, whose first
+  positional argument is `total=` — so every request had to COMPLETE within
+  `read_timeout` seconds (default 120; ebooklet passes 60), despite the
+  parameter being named and documented as a read timeout everywhere. This
+  also applied to large ranged GETs on slow downlinks (consumers pulling
+  ~100MB group objects). Now `Timeout(connect=connect_timeout, read=timeout)`.
+
+### Added
+- **`connect_timeout` parameter** on `session()` and `S3Session` (default 30):
+  bounds connection establishment, and — an urllib3 semantic worth knowing —
+  each body-send chunk during uploads.
+
 ## 0.9.3 (2026-07-12)
 
 ### Changed

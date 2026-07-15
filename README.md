@@ -19,6 +19,7 @@
 - **Distributed Locking**: Verified shared/exclusive locking on plain object storage - no CAS required (see [docs/locking.md](docs/locking.md)).
 - **Streaming Support**: Efficiently stream large objects.
 - **Automatic Retries**: urllib3 retries with exponential backoff for connection errors and transient HTTP statuses (429/5xx); `Retry-After` honored; non-idempotent POSTs are never status-retried.
+- **Slow-link-safe transfers** (0.9.4): timeouts are true *idle* bounds, never total-request deadlines — large uploads are streamed in chunks (bytes bodies over 1 MiB are wrapped automatically), so a slow-but-progressing multi-minute transfer never times out while a genuinely stalled socket still dies within `read_timeout`/`connect_timeout`.
 
 ## Installation
 

@@ -424,9 +424,14 @@ class B2Session:
 
         headers = {'Authorization': upload_url_data['auth_token'], 'X-Bz-File-Name': key}
 
-        if isinstance(obj, bytes):
+        if isinstance(obj, (bytes, bytearray)):
             headers['Content-Length'] = len(obj)
             headers['X-Bz-Content-Sha1'] = hashlib.sha1(obj).hexdigest()
+            ## Stream large bodies (see s3.py put_object): a monolithic bytes
+            ## body is one sendall() with a whole-body deadline. The sha1 above
+            ## is computed from the bytes, so integrity verification is kept.
+            if len(obj) > utils.stream_body_threshold:
+                obj = io.BytesIO(obj)
         else:
             if obj.seekable():
                 obj.seek(0, 2)

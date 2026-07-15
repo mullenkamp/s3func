@@ -65,6 +65,12 @@ uv run pytest s3func/tests/                                                # FUL
   1.0**. Do not extend; B2 works fully through `S3Session`.
 - `http_url.py` — plain-HTTP read-only session.
 
+## Transport invariants (2026-07-15 review — do not regress these)
+
+- **Never hand urllib3 a monolithic `bytes` body larger than `utils.stream_body_threshold` (1MiB).** A bytes body is transmitted as ONE socket `sendall()` whose deadline is fixed at entry and never extended by progress — any upload slower than `len(body)/connect_timeout` dies spuriously mid-transfer on a healthy connection, then retries from byte 0 (this deterministically broke every concurrent large-group ebooklet push; dual-blind-review-confirmed, live A/B proven). `put_object` (S3 and B2-native) wraps large bytes in `io.BytesIO` so urllib3 streams 16KiB chunks: the timeout becomes per-chunk idle, retries rewind via `seek(0)`, and the payload hash is still computed from the bytes in one pass. Do not "simplify" the wrap away.
+- **`session()` must construct `Timeout(connect=..., read=...)` — never `Timeout(x)`**, whose first positional arg is `total=` (a hard wall on whole requests; this was the 0.9.3 bug, mislabeled as a read timeout). `read=` is a per-response-read idle bound; `connect=` also governs each body-send chunk (an urllib3 semantic — the send phase runs on the connect timeout).
+- The offline send-wall tripwire (`tests/test_streaming_upload.py`, throttled loopback sink) guards both invariants in the normal suite; `tests/test_scale_transport.py` (`pytest -m scale`, never CI) reproduces the failing regime live. Full mechanism + evidence: the ebooklet repo's `planning/transport-review-*.md`.
+
 ## Testing Philosophy
 
 `test_lock_model.py` carries the lock's correctness: a `FakeSession` with

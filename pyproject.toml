@@ -130,3 +130,12 @@ exclude_lines = [
   "if __name__ == .__main__.:",
   "if TYPE_CHECKING:",
 ]
+
+[tool.pytest.ini_options]
+## The scale tier (real-network, large-body, release-cadence) is deselected
+## by default and NEVER runs in CI: opt in with `uv run pytest -m scale`.
+addopts = "-m 'not scale'"
+markers = [
+    "scale: real-network large-body tests; run at release cadence with `pytest -m scale` (never CI)",
+]
+testpaths = ["s3func/tests"]
