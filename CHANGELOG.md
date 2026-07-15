@@ -32,8 +32,10 @@ from 60s to 30s).
   `seek(0)`, and the payload hash (SigV4 SHA-256 / B2 SHA-1) is still computed
   from the original bytes in one pass. Verified live A/B: 10×78MB raw-bytes
   PUTs = 0/10; identical bodies via BytesIO = 10/10 with zero retries, even
-  on streams that legitimately took 275s. Known cost: `BytesIO(obj)` copies,
-  so each in-flight large upload transiently holds ~2× its payload in RAM.
+  on streams that legitimately took 275s. RAM cost: none — CPython's
+  `BytesIO(bytes)` is copy-on-write (measured: +0 MB on wrap and on chunked
+  reads; a copy happens only if the stream is written to, which the upload
+  path never does).
 - **The session timeout is now a true READ (idle) timeout, not a total-request
   deadline.** `session()` built `urllib3.util.Timeout(timeout)`, whose first
   positional argument is `total=` — so every request had to COMPLETE within
@@ -41,6 +43,16 @@ from 60s to 30s).
   parameter being named and documented as a read timeout everywhere. This
   also applied to large ranged GETs on slow downlinks (consumers pulling
   ~100MB group objects). Now `Timeout(connect=connect_timeout, read=timeout)`.
+- **B2-native `put_object` rewinds file-like bodies before every retry
+  attempt.** Its manual 401/503 retry loop re-POSTs the body; a stream
+  consumed by the previous attempt (reachable since the large-bytes BytesIO
+  wrap above) would have retried as an empty body against a non-zero
+  Content-Length. (The B2-native module remains deprecated — removal at 1.0;
+  the S3-compatible endpoint is the supported path.)
+- **CI: the test matrix now runs one Python version at a time**
+  (`max-parallel: 1`, also applied to ebooklet). The live suites talk to real
+  S3 providers with shared credentials — concurrent matrix jobs raced each
+  other (lock elections, native-B2 auth) and failed spuriously.
 
 ### Added
 - **`connect_timeout` parameter** on `session()` and `S3Session` (default 30):

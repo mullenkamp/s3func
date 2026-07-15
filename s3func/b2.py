@@ -476,6 +476,12 @@ class B2Session:
 
         counter = 0
         while True:
+            ## Each attempt re-POSTs the body: a file-like obj consumed by the
+            ## previous attempt MUST be rewound or the retry sends an empty
+            ## stream against a non-zero Content-Length (reachable since the
+            ## large-bytes BytesIO wrap above; harmless on the first attempt).
+            if hasattr(obj, 'seek'):
+                obj.seek(0)
             resp = self._session.request('post', upload_url, body=obj, headers=headers)
             if resp.status == 200:
                 break
