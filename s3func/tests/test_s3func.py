@@ -284,3 +284,72 @@ def test_special_character_keys(s3_session):
         ## singular delete: MEGA S4's multi-object-delete POST hangs on keys
         ## containing '$' (server-side quirk; documented in benchmarks results)
         s3_session.delete_object(key)
+
+
+#################################################
+### keys= + purge=True, live (0.9.6)
+
+
+def test_s3_versioned_listing_capability_is_recorded(s3_session, s3_provider):
+    """Record, per provider, whether ?versions is actually supported.
+
+    Not a pass/fail assertion - the point is the RECORD. delete_objects keeps a
+    documented fallback for providers that answer 501, and until this runs
+    nobody knows whether that branch is live anywhere or is dead code. The
+    sibling test at test_s3_list_object_versions only skips on it, which leaves
+    no trace.
+    """
+    from s3func.response import S3ListError
+
+    ## NAME ONLY. The s3_provider fixture yields (name, config) and the config
+    ## holds live access keys - never format the fixture value itself.
+    provider_name = s3_provider[0]
+
+    key = f'vercap-{uuid.uuid4().hex}'
+    s3_session.put_object(key, b'v1')
+    try:
+        try:
+            records = list(s3_session.list_object_versions(prefix=key).iter_objects())
+        except S3ListError as err:
+            print(f'\nVERSIONED LISTING [{provider_name}]: NOT supported (status={err.status})')
+            return
+        has_version_ids = any(r.get('version_id') for r in records)
+        print(f'\nVERSIONED LISTING [{provider_name}]: supported; version ids present={has_version_ids}')
+    finally:
+        s3_session.delete_objects(keys=[key], purge=True)
+
+
+def test_s3_bulk_purge_removes_exact_subset(s3_session):
+    """Live proof of the invariant the whole design rests on: the requested keys
+    go, and a sibling sharing their prefix survives.
+
+    Asserted through the UNVERSIONED listing, which every provider supports -
+    MEGA S4 answers 501 to ?versions (see the capability test above), so a
+    version-level assertion would fail there on the test's own verification step
+    rather than on anything delete_objects did. Where versioning IS available the
+    stronger version-level check runs too.
+    """
+    from s3func.response import S3ListError
+
+    prefix = f'bulkpurge-{uuid.uuid4().hex}/'
+    doomed = [f'{prefix}1', f'{prefix}12']
+    spared = f'{prefix}10'
+    for key in doomed + [spared]:
+        s3_session.put_object(key, b'v1')
+        s3_session.put_object(key, b'v2')
+
+    try:
+        s3_session.delete_objects(keys=list(doomed), purge=True)
+
+        survivors = {r['key'] for r in s3_session.list_objects(prefix=prefix).iter_objects()}
+        assert survivors == {spared}, f'expected only {spared} to survive, got {survivors}'
+
+        try:
+            versioned = {r['key'] for r in s3_session.list_object_versions(prefix=prefix).iter_objects()}
+        except S3ListError as err:
+            if err.status != 501:
+                raise
+        else:
+            assert versioned == {spared}, f'versions of the deleted keys survived: {versioned}'
+    finally:
+        s3_session.delete_objects(prefix=prefix, purge=True)

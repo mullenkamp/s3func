@@ -41,11 +41,24 @@ uv run pytest s3func/tests/                                                # FUL
   `HTTPError` listing the failed keys if ANY delete fails (all chunks are
   attempted first) — the multi-delete response must never be ignored: Quiet
   mode still returns per-key `<Error>` elements, and urllib3 does not raise
-  on HTTP status.
+  on HTTP status. **A purge that cannot resolve versions must FAIL, never fall
+  back to a versionless delete** — that reports success while retaining (and
+  billing for) every version, and it is invisible from the caller's side.
+  `_resolve_versions` does one bulk listing under the keys' common prefix and
+  filters by EXACT key equality (never a prefix match: ebooklet group ids are
+  non-zero-padded decimals, so `1` would otherwise take `10` with it). Its
+  page-budget abort lives there and NOT in `response.list_records`, because a
+  cap inside the shared generator would truncate a lock election snapshot.
 - `signer.py` — SigV4. **Invariant: wire encoding == canonical encoding**,
   strict RFC3986 for both paths and query strings (some providers, e.g. MEGA,
   do not canonicalize a wire `+` as a space). `add_auth(_now=...)` is a test seam.
-- `response.py` — response wrappers + XML/JSON list parsers. ListVersions
+- `response.py` — response wrappers + XML/JSON list parsers. Listing failures
+  raise `S3ListError` (an `HTTPError` subclass) carrying `.status`: **never
+  branch on a substring of an exception message.** urllib3's transport errors
+  are themselves `HTTPError`s and `MaxRetryError` embeds the request URL, so
+  the old `'501' in str(e)` matched any key containing `501`. `list_records`
+  is the ONE versioned-listing-with-501-fallback used by the delete paths and
+  the lock; MEGA S4 really does answer 501, so that branch is live. ListVersions
   yields delete markers explicitly with `delete_marker: True`.
 - `locking.py` — the bakery-style `DistributedLock`/`S3Lock`. Full design +
   diagrams: **`docs/locking.md`**. Non-negotiable invariants (each one is a

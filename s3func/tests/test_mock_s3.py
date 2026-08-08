@@ -205,3 +205,97 @@ def test_mock_s3_lock_concurrency(s3_session):
         concurrent.futures.wait(futures)
 
     assert sum(results) == num_workers
+
+
+#################################################
+### keys= + purge=True against a real versioned store (0.9.6)
+
+
+@pytest.fixture
+def s3_session_unversioned(s3_server):
+    """A bucket with versioning NEVER enabled - the branch where a key exists
+    but the listing carries no version id, so the delete must go out
+    versionless."""
+    access_key_id = access_key = "testing"
+    bucket_name = f"unversioned-{uuid.uuid4().hex[:12]}"
+    client = boto3.client(
+        "s3", endpoint_url=s3_server, aws_access_key_id=access_key_id, aws_secret_access_key=access_key
+    )
+    client.create_bucket(Bucket=bucket_name)
+    return s3.S3Session(access_key_id, access_key, bucket_name, endpoint_url=s3_server)
+
+
+def test_mock_s3_purge_deletes_exact_subset_not_the_prefix(s3_session):
+    """The hazard that forbids a prefix= delete: ebooklet group ids are
+    non-zero-padded decimals, so removing group '1' must leave '10' whole."""
+    prefix = f"grp-{uuid.uuid4().hex}/"
+    for key, n in ((f'{prefix}1', 2), (f'{prefix}10', 2), (f'{prefix}12', 1)):
+        for i in range(n):
+            s3_session.put_object(key, f'v{i}'.encode())
+
+    s3_session.delete_objects(keys=[f'{prefix}1', f'{prefix}12'], purge=True)
+
+    survivors = {obj['key'] for obj in s3_session.list_object_versions(prefix=prefix).iter_objects()}
+    assert survivors == {f'{prefix}10'}
+
+
+def test_mock_s3_purge_removes_every_version_and_marker(s3_session):
+    """A purge must clear delete markers too, not just live versions."""
+    prefix = f"marker-{uuid.uuid4().hex}/"
+    key = f'{prefix}obj'
+    s3_session.put_object(key, b'v1')
+    s3_session.put_object(key, b'v2')
+    s3_session.delete_objects(keys=[key], purge=False)  # lays a delete marker
+
+    s3_session.delete_objects(keys=[key], purge=True)
+
+    assert not list(s3_session.list_object_versions(prefix=prefix).iter_objects())
+
+
+def test_mock_s3_purge_of_missing_key_leaves_nothing_behind(s3_session):
+    """0.9.5 emitted a versionless delete for an unresolvable key. Whatever the
+    provider does with that, the bucket must be left exactly as it was."""
+    prefix = f"ghost-{uuid.uuid4().hex}/"
+
+    s3_session.delete_objects(keys=[f'{prefix}never-existed'], purge=True)
+
+    assert not list(s3_session.list_object_versions(prefix=prefix).iter_objects())
+
+
+def test_mock_s3_purge_costs_one_listing_for_many_keys(s3_session):
+    """The whole point of the change, measured against a real server."""
+    prefix = f"count-{uuid.uuid4().hex}/"
+    keys = [f'{prefix}{i}' for i in range(5)]
+    for key in keys:
+        s3_session.put_object(key, b'v1')
+        s3_session.put_object(key, b'v2')
+
+    calls = []
+    real_request = s3_session.request
+
+    def counting_request(method, *args, **kwargs):
+        calls.append(method)
+        return real_request(method, *args, **kwargs)
+
+    s3_session.request = counting_request
+    try:
+        s3_session.delete_objects(keys=list(keys), purge=True)
+    finally:
+        s3_session.request = real_request
+
+    assert calls.count('GET') == 1, f'expected one bulk listing, got {calls}'
+    assert not list(s3_session.list_object_versions(prefix=prefix).iter_objects())
+
+
+def test_mock_s3_purge_on_unversioned_bucket(s3_session_unversioned):
+    """No versioning: the key resolves with no version id, and the delete still
+    has to remove it."""
+    session = s3_session_unversioned
+    prefix = f"unver-{uuid.uuid4().hex}/"
+    keys = [f'{prefix}a', f'{prefix}b']
+    for key in keys:
+        session.put_object(key, b'data')
+
+    session.delete_objects(keys=list(keys), purge=True)
+
+    assert not list(session.list_objects(prefix=prefix).iter_objects())

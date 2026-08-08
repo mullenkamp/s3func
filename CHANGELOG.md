@@ -4,6 +4,66 @@ Notable changes to s3func. The format loosely follows [Keep a Changelog](https:/
 s3func does not promise SemVer — minor versions may change behavior.
 Entries for 0.8.5 and earlier were reconstructed from commit history after the fact.
 
+## 0.9.6 (2026-08-09)
+
+The batched-purge release. `delete_objects(keys=..., purge=True)` resolved every key's
+version ids with its own listing request; a live ECan dataset repair that deleted 3,789
+objects therefore made ~3,793 sequential requests and took **~17.6 minutes** at 0.279 s/call
+against a remote endpoint, at ~0.2 % CPU — pure round-trip latency. One bulk listing returned
+the same 7,937 version records in 3.62 s. Design dual-reviewed pre-implementation (Fable 5 +
+Gemini 3.1 Pro, round `s3func-delete-1`), which turned up three *silent* ways a purge could
+already fail to purge — all fixed here, and all worse than the slowness that prompted the
+round.
+
+### Fixed
+
+- **Version resolution now costs ONE bulk listing, not one request per key.** Resolution
+  derives the requested keys' common prefix, lists it once, and filters to the exact
+  requested set in memory — exact key equality, never a prefix match, because callers rely on
+  that (ebooklet group ids are non-zero-padded decimals, so deleting group `1` by prefix would
+  also destroy `10`, `11`, …). If the derived prefix turns out to be unselective, resolution
+  falls back to per-key listings once the bulk attempt has fetched more pages than there are
+  keys, bounding the worst case at roughly twice the per-key cost. Single keys, empty key
+  lists, and key sets with no common prefix skip the bulk path entirely — an empty prefix is
+  dropped by the query builder, which would have turned the listing into a whole-bucket scan.
+- **A listing failure no longer silently downgrades a purge to a versionless delete.** Three
+  separate paths did this, each reporting success while leaving every version stored and
+  billed on a versioned bucket:
+  - the `'501' in str(e)` capability test matched any transport error whose message embedded a
+    URL containing `501` — urllib3's transport exceptions are all `HTTPError` subclasses and
+    `MaxRetryError` embeds the request URL, and `db/501.<generation>` is a routine ebooklet
+    group key. Detection is now structural, via a typed `S3ListError` carrying `.status`.
+    **The fallback itself is live, not theoretical: MEGA S4 answers 501 to `?versions`**
+    (recorded per-provider by a new test); B2 supports versioned listings.
+  - a non-501 `HTTPError` during resolution fell through to a versionless delete. It now
+    propagates.
+  - a bare `except Exception` swallowed everything else — including the `ValueError` raised by
+    the listing parser's own hard-coded `LastModified` format (see below).
+- **`LastModified` is parsed leniently, and unparsable values raise `S3ListError`.** The
+  parser accepted only `...%S.%fZ`, so a provider omitting fractional seconds or sending a
+  numeric offset raised a bare `ValueError` — swallowed on the `keys=` path, and leaking
+  uncaught on the `prefix=` path. Every failure escaping a listing is now an `HTTPError`
+  subclass, which is what downstream consumers catch.
+- **A requested key with no listed versions is skipped rather than deleted without a version
+  id**, so deleting something that does not exist no longer leaves a delete marker behind. A
+  delete where every key is missing now issues no request at all.
+- **Paging fixes.** `version-id-marker` is now cleared when a page does not supply a new one
+  (a stale marker paired with a fresh `key-marker` asks the provider to resume from a version
+  id belonging to a different key). A truncated listing with no continuation marker now raises
+  instead of re-requesting the same page for ever.
+- **Duplicate delete entries are deduplicated**, so a bare key alongside the same key at an
+  explicit version no longer deletes that version twice.
+
+### Changed
+
+- **Malformed key entries raise `ValueError` before any request is made.** A `None` or
+  missing-`key` entry previously cost a whole-bucket listing per bad entry and only then
+  failed while building the request body.
+- The versioned-listing-with-501-fallback is now one shared implementation
+  (`response.list_records`), used by both delete paths and by the lock's election listing —
+  which was exposed to the same false positive, since lock ids are uuid hex. It deliberately
+  imposes no size cap: an election needs the whole snapshot.
+
 ## 0.9.5 (2026-07-16)
 
 ### Fixed

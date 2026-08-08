@@ -27,7 +27,7 @@ from time import sleep
 import urllib3
 import datetime
 
-from . import b2, s3
+from . import b2, s3, response
 
 
 #######################################################
@@ -224,19 +224,14 @@ class DistributedLock:
     def _list_objects(session, obj_lock_key, lock_id=None):
         key = obj_lock_key + (lock_id if lock_id else "")
 
-        # Try list_object_versions first; fall back to list_objects
-        # for providers that don't support versioning (e.g. Mega S3)
-        objs = session.list_object_versions(prefix=key)
-        try:
-            items = list(objs.iter_objects())
-        except urllib3.exceptions.HTTPError as e:
-            if '501' in str(e):
-                objs = session.list_objects(prefix=key)
-                items = list(objs.iter_objects())
-            elif '401' in str(e) or '403' in str(e):
-                raise
-            else:
-                raise
+        ## Versioned listing, falling back to the unversioned one for providers
+        ## without versioning (e.g. Mega S3). Shared with the delete paths: the
+        ## fallback used to be gated on `'501' in str(e)`, which false-positives
+        ## on any transport error whose embedded URL contains '501' - and a lock
+        ## id is uuid hex, so it can. list_records gates on the numeric status.
+        ## No size cap is imposed here: an election needs the WHOLE snapshot
+        ## (the own-ticket invariant), so a truncated listing is never safe.
+        items = list(response.list_records(session, key))
 
         res = []
         for l in items:

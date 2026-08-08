@@ -16,6 +16,109 @@ from s3func import utils
 
 
 #############################################################
+### Listing errors
+
+
+class S3ListError(urllib3.exceptions.HTTPError):
+    """
+    A listing request failed, or returned something unparsable.
+
+    Carries the numeric HTTP status (None when the failure was in parsing) so
+    callers can branch STRUCTURALLY. The previous `'501' in str(e)` idiom could
+    not: urllib3's transport exceptions are themselves HTTPError subclasses and
+    MaxRetryError embeds the request URL in its str(), so any key or prefix
+    containing '501' - `db/501.<generation>` is a routine ebooklet group key -
+    turned a transport blip into a false "provider does not support versioning"
+    signal and silently downgraded a purge to a versionless delete.
+
+    Every failure escaping a listing must be an HTTPError subclass. ebooklet's
+    post-commit GC catches HTTPError and nothing else, and it runs after the
+    journal has been cleared: anything else crashes a push that already
+    succeeded.
+    """
+
+    def __init__(self, status, message=None):
+        self.status = status
+        super().__init__(message or f'S3 List Error {status}')
+
+
+## Providers disagree on the LastModified shape (fractional seconds, 'Z' vs a
+## numeric offset). Parse leniently rather than failing a whole listing over a
+## timestamp nothing in the delete path reads - but if none of these match,
+## raise S3ListError rather than letting a bare ValueError escape.
+_TIMESTAMP_FORMATS = (
+    '%Y-%m-%dT%H:%M:%S.%fZ',
+    '%Y-%m-%dT%H:%M:%SZ',
+    '%Y-%m-%dT%H:%M:%S.%f%z',
+    '%Y-%m-%dT%H:%M:%S%z',
+)
+
+
+def _list_timestamp(text):
+    """Parse a listing timestamp, or raise S3ListError."""
+    if not text:
+        return None
+    for fmt in _TIMESTAMP_FORMATS:
+        try:
+            parsed = datetime.datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=datetime.timezone.utc)
+        return parsed
+    raise S3ListError(None, f'unparsable LastModified in a listing response: {text!r}')
+
+
+def _list_int(text):
+    """Parse a listing integer field, or raise S3ListError."""
+    if not text:
+        return 0
+    try:
+        return int(text)
+    except (TypeError, ValueError):
+        raise S3ListError(None, f'unparsable numeric field in a listing response: {text!r}')
+
+
+def list_records(session, prefix, on_page=None):
+    """
+    Stream every version record under `prefix`, preferring the versioned listing.
+
+    Falls back to the unversioned (v2) listing ONLY on a genuine 501 seen on the
+    FIRST page - a provider without versioning support refuses immediately, so a
+    501 arriving mid-stream is a real failure and is not recoverable by
+    restarting with a different listing.
+
+    This is the single implementation of that fallback; s3.py's two delete paths
+    and locking.py's election listing all route through it.
+
+    NOTE: this generator deliberately carries no size cap. The delete resolver's
+    over-listing guard lives in S3Session._resolve_versions, because a cap here
+    would silently truncate a LOCK election listing, whose own-ticket invariant
+    tolerates no partial snapshot.
+    """
+    ## `on_page` is passed ONLY when a caller asked for it. Session/list-response
+    ## objects are duck-typed - s3func's own tests, ebooklet's fake_s3, and any
+    ## external implementer define iter_objects(self) with no keyword - so
+    ## passing it unconditionally would break every one of them.
+    def _iter(listing):
+        return listing.iter_objects(on_page=on_page) if on_page is not None else listing.iter_objects()
+
+    records = _iter(session.list_object_versions(prefix=prefix))
+    try:
+        first = next(records)
+    except StopIteration:
+        return
+    except S3ListError as err:
+        if err.status != 501:
+            raise
+        yield from _iter(session.list_objects(prefix=prefix))
+        return
+
+    yield first
+    yield from records
+
+
+#############################################################
 ### Response classes
 
 
@@ -80,9 +183,16 @@ B2Response = lambda r, s: Response(r, s, 'b2')
 HttpResponse = lambda r, s: Response(r, s, 'http')
 
 
-def iter_s3_list(session, url, method, headers, params):
+def iter_s3_list(session, url, method, headers, params, on_page=None):
     """
     Iterates over S3 list results (Versions or Objects).
+
+    `on_page`, if given, is called once per successfully fetched page. Pages are
+    the unit a caller is actually billed for, and they are invisible from the
+    outside of this generator, so a caller that needs to bound its own cost
+    (the delete resolver) cannot count them any other way. It must NOT infer
+    them from a record count: s3func never sends max-keys, so the page size is
+    whatever the provider defaults to.
     """
     # ns = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
 
@@ -99,12 +209,15 @@ def iter_s3_list(session, url, method, headers, params):
         resp = session.request('GET', url, headers=headers, fields=params)
 
         if (resp.status // 100) != 2:
-            raise urllib3.exceptions.HTTPError(f"S3 List Error {resp.status}")
+            raise S3ListError(resp.status)
 
         try:
             root = ET.fromstring(resp.data)
         except ET.ParseError:
-            raise urllib3.exceptions.HTTPError("Failed to parse S3 XML response")
+            raise S3ListError(resp.status, "Failed to parse S3 XML response")
+
+        if on_page is not None:
+            on_page()
 
         # Determine namespace from root tag
         if '}' in root.tag:
@@ -132,17 +245,11 @@ def iter_s3_list(session, url, method, headers, params):
                 yield {
                     # 'etag': version.find('s3:ETag', ns).text.strip('"') if version.find('s3:ETag', ns) is not None else None,
                     'content_md5': find_text(version, 'ETag').strip('"') if find_text(version, 'ETag') else None,
-                    'content_length': int(find_text(version, 'Size') or 0),
+                    'content_length': _list_int(find_text(version, 'Size')),
                     'key': find_text(version, 'Key'),
                     'version_id': find_text(version, 'VersionId'),
                     'is_latest': find_text(version, 'IsLatest') == 'true',
-                    'upload_timestamp': (
-                        datetime.datetime.strptime(find_text(version, 'LastModified'), '%Y-%m-%dT%H:%M:%S.%fZ').replace(
-                            tzinfo=datetime.timezone.utc
-                        )
-                        if find_text(version, 'LastModified')
-                        else None
-                    ),
+                    'upload_timestamp': _list_timestamp(find_text(version, 'LastModified')),
                     # 'owner': ... (Owner might be present)
                 }
             # Delete markers are yielded explicitly with a flag so consumers can
@@ -156,23 +263,31 @@ def iter_s3_list(session, url, method, headers, params):
                     'key': find_text(marker, 'Key'),
                     'version_id': find_text(marker, 'VersionId'),
                     'is_latest': find_text(marker, 'IsLatest') == 'true',
-                    'upload_timestamp': (
-                        datetime.datetime.strptime(find_text(marker, 'LastModified'), '%Y-%m-%dT%H:%M:%S.%fZ').replace(
-                            tzinfo=datetime.timezone.utc
-                        )
-                        if find_text(marker, 'LastModified')
-                        else None
-                    ),
+                    'upload_timestamp': _list_timestamp(find_text(marker, 'LastModified')),
                 }
 
             is_truncated = find_text(root, 'IsTruncated') == 'true'
             if is_truncated:
                 next_key_marker = find_text(root, 'NextKeyMarker')
                 next_version_id_marker = find_text(root, 'NextVersionIdMarker')
-                if next_key_marker:
-                    params['key-marker'] = next_key_marker
+                ## Truncated with no continuation marker: the request params are
+                ## unchanged, so continuing would re-fetch this same page for
+                ## ever. Raise instead - a listing we cannot finish is INCOMPLETE
+                ## data, and the delete resolver turns missing records into
+                ## silently retained versions.
+                if not next_key_marker:
+                    raise S3ListError(
+                        resp.status,
+                        'listing reported IsTruncated with no NextKeyMarker - cannot page further',
+                    )
+                params['key-marker'] = next_key_marker
+                ## set-or-CLEAR: a stale version-id-marker paired with a NEW
+                ## key-marker asks the provider to resume from a version id that
+                ## belongs to a different key, which can skip records.
                 if next_version_id_marker:
                     params['version-id-marker'] = next_version_id_marker
+                else:
+                    params.pop('version-id-marker', None)
             else:
                 break
 
@@ -181,22 +296,22 @@ def iter_s3_list(session, url, method, headers, params):
                 yield {
                     # 'etag': contents.find('s3:ETag', ns).text.strip('"'),
                     'content_md5': find_text(contents, 'ETag').strip('"') if find_text(contents, 'ETag') else None,
-                    'content_length': int(find_text(contents, 'Size') or 0),
+                    'content_length': _list_int(find_text(contents, 'Size')),
                     'key': find_text(contents, 'Key'),
-                    'upload_timestamp': (
-                        datetime.datetime.strptime(
-                            find_text(contents, 'LastModified'), '%Y-%m-%dT%H:%M:%S.%fZ'
-                        ).replace(tzinfo=datetime.timezone.utc)
-                        if find_text(contents, 'LastModified')
-                        else None
-                    ),
+                    'upload_timestamp': _list_timestamp(find_text(contents, 'LastModified')),
                 }
 
             is_truncated = find_text(root, 'IsTruncated') == 'true'
             if is_truncated:
                 token = find_text(root, 'NextContinuationToken')
-                if token:
-                    params['continuation-token'] = token
+                ## Same reasoning as the versioned branch: no token means we
+                ## cannot page, and silently stopping under-reports.
+                if not token:
+                    raise S3ListError(
+                        resp.status,
+                        'listing reported IsTruncated with no NextContinuationToken - cannot page further',
+                    )
+                params['continuation-token'] = token
             else:
                 break
         else:
@@ -218,10 +333,12 @@ class S3ListResponse:
         self.status = 200  # Assumed valid until iteration fails
         self.error = None
 
-    def iter_objects(self):
+    def iter_objects(self, on_page=None):
         if self.error:
             raise urllib3.exceptions.HTTPError(self.error)
-        return iter_s3_list(self._session, self._url, self._method, self._headers, copy.deepcopy(self._params))
+        return iter_s3_list(
+            self._session, self._url, self._method, self._headers, copy.deepcopy(self._params), on_page=on_page
+        )
 
     def __repr__(self):
         return f'status: {self.status}'

@@ -4,6 +4,7 @@ from s3func.s3 import S3Session
 from s3func.b2 import B2Session
 from s3func.locking import S3Lock, B2Lock
 from s3func.http_url import HttpSession
-from s3func import s3, http_url, utils, b2
+from s3func.response import S3ListError
+from s3func import s3, http_url, utils, b2, response
 
-__version__ = '0.9.5'
+__version__ = '0.9.6'
