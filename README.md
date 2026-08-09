@@ -80,6 +80,41 @@ resp = session.head_object('data.csv')
 print(resp.metadata['processed']) # 'false'
 ```
 
+### Deleting Objects
+
+`delete_objects` removes many objects in one batched request. By default it *purges*: every
+version of each object is removed, not just the current one.
+
+```python
+# Delete specific objects. Keys are matched EXACTLY, never as prefixes -
+# deleting 'group/1' does not touch 'group/10'.
+session.delete_objects(keys=['old/a.bin', 'old/b.bin'])
+
+# Delete everything under a prefix
+session.delete_objects(prefix='old/')
+
+# Keep the version history: on a versioned bucket this only adds a delete
+# marker, and every previous version is retained (and still billed for).
+session.delete_objects(keys=['old/a.bin'], purge=False)
+
+# Already know the version ids? Pass dicts and no lookup is done at all.
+session.delete_objects(keys=[{'key': 'old/a.bin', 'version_id': '...'}])
+
+# A single object, optionally one specific version
+session.delete_object('old/a.bin')
+session.delete_object('old/a.bin', version_id='...')
+```
+
+`keys` and `prefix` are mutually exclusive, and exactly one is required. Under `purge=True`
+the version ids for bare string keys are resolved with a *single* bulk listing rather than one
+request per key.
+
+Deletion is the one place where failures are raised rather than returned: every chunk is
+attempted first, so a partial failure still deletes everything it can, and the resulting
+`urllib3.exceptions.HTTPError` names the keys that failed. A purge that cannot read the
+versions it is meant to remove also raises — it will not quietly fall back to a versionless
+delete, which would report success while leaving the whole version history in place.
+
 ### Distributed Locking
 
 `s3func` provides a powerful distributed lock that mimics Python's `threading.Lock` API.
@@ -100,10 +135,73 @@ if lock.acquire(blocking=True, timeout=10):
         lock.release()
 ```
 
+## Errors and Exceptions
+
+`s3func` splits failures into two deliberate categories, and the split follows the shape of the
+operation rather than the kind of error.
+
+**Single-object methods return a response; they do not raise on HTTP status.** `get_object`,
+`put_object`, `head_object`, `copy_object`, `delete_object` and the object-lock config methods
+all hand back a response whose `.status` and `.error` you inspect. A 404 or a 403 is a value,
+not an exception.
+
+```python
+resp = session.get_object('maybe-missing.bin')
+if resp.status // 100 != 2:
+    print('failed:', resp.status, resp.error)
+```
+
+**Aggregate operations raise, because there is no single response to hand back.** Listings and
+multi-object deletes span many requests, so a failure part-way through cannot be reported as a
+status code:
+
+| operation | raises |
+|---|---|
+| `list_objects(...).iter_objects()`, `list_object_versions(...).iter_objects()` | `S3ListError` — a non-2xx page, an unparsable body or field, or a truncated listing the server gave no way to continue |
+| `delete_objects(...)` | `HTTPError` naming the keys that failed; every chunk is attempted first. Also `S3ListError` if a purge cannot resolve versions |
+| lock acquire/release (`session.lock(...)`) | `HTTPError` on a failed ticket write, `ValueError` if a foreign object is found in the lock namespace |
+
+**Transport failures raise from any call**, single-object ones included, once retries are
+exhausted — `MaxRetryError`, `ProtocolError`, timeouts and so on.
+
+The unifying rule: **every failure that reaches you from a request is a subclass of
+`urllib3.exceptions.HTTPError`**, including `S3ListError` and all urllib3 transport errors. One
+`except` clause catches the lot:
+
+```python
+import urllib3
+
+try:
+    for obj in session.list_object_versions(prefix='data/').iter_objects():
+        ...
+    session.delete_objects(keys=doomed)
+except urllib3.exceptions.HTTPError as err:
+    ...  # transport failure, bad listing, or a partly-failed delete
+```
+
+`S3ListError` carries the numeric HTTP `.status` (`None` when the failure was in parsing), so
+branch on that rather than on the text of a message — urllib3's transport errors embed the
+request URL in their `str()`, which makes substring tests match keys and prefixes by accident.
+
+```python
+from s3func import S3ListError
+
+try:
+    records = list(session.list_object_versions(prefix=key).iter_objects())
+except S3ListError as err:
+    if err.status == 501:
+        ...  # this provider has no versioning support (MEGA S4 answers 501 here)
+    raise
+```
+
+**Invalid arguments raise before anything is sent** — `ValueError` or `TypeError` for
+non-string or oversized metadata, for passing both `keys` and `prefix` to `delete_objects`, for
+a malformed key entry, or for a bad endpoint URL.
+
 ## Performance Tips
 
 - **Streaming**: Set `stream=True` in the session (default) or individual requests to handle large files without loading them entirely into memory.
-- **Retries**: All sessions share one `urllib3` Retry policy (`max_attempts` retries, exponential backoff): connection errors and transient statuses (429, 500, 502, 503, 504) are retried on idempotent methods; when retries exhaust, the final response is returned (never an exception) so callers can inspect `resp.status`/`resp.error`. POST requests (S3 multi-object-delete, B2-native uploads) are never status-retried.
+- **Retries**: All sessions share one `urllib3` Retry policy (`max_attempts` retries, exponential backoff, `Retry-After` honored): connection errors and transient statuses — 429, 500, 502, 503, 504, plus the Cloudflare-style edge errors 520-524 that B2's fronting infrastructure emits — are retried on idempotent methods. POST requests (S3 multi-object-delete, B2-native uploads) are never status-retried. When *status* retries are exhausted the final response is **returned**, not raised, so callers can inspect `resp.status`/`resp.error`; a *connection* failure that exhausts its retries **does** raise. See [Errors and Exceptions](#errors-and-exceptions).
 
 Changes between releases are tracked in [CHANGELOG.md](CHANGELOG.md).
 
